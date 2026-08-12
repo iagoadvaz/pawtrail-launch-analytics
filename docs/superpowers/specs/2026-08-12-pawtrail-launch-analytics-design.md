@@ -217,3 +217,48 @@ pawtrail-launch-analytics/
   visibly identifiable in the dashboard and called out correctly in
   `NARRATIVE.md`, proving the metrics and dashboard actually surface a
   root-cause signal rather than just displaying numbers.
+
+## 9. References
+
+External sources used to validate the metrics catalog (Section 6) against
+real-world industry practice. None of these describe PawTrail or any real
+company in this repository — they ground the metric *definitions and
+benchmarks* only.
+
+- **Attach rate** — standard formula is subscriptions-with-add-on ÷ total
+  active subscriptions (or Add-on ARR ÷ Core ARR). Typical benchmarks: 10–30%
+  for optional add-ons, 40%+ for top performers.
+  [Product Attach Rates for SaaS Companies (Ordway Labs)](https://ordwaylabs.com/blog/product-attach-rates-saas-companies/),
+  [Attach Rate for Add-ons Playbook (Umbrex)](https://umbrex.com/resources/company-analysis/product-management/attach-rate-for-add-ons/)
+
+- **Activation rate** — confirmed as the leading indicator of retention;
+  activation windows of 7 days (consumer) or 14–30 days (B2B) are standard.
+  Healthy benchmark: 25–35% of signups; below 20% signals severe onboarding
+  friction. Validates the 7/14/30-day activation windows and the choice of
+  activation as the launch-phase North Star.
+  [Activation metrics: how to find, measure, and improve yours (Appcues)](https://www.appcues.com/blog/product-activation-metric),
+  [Activation Rate: How to Define, Measure, and Improve It (ProdPad)](https://www.prodpad.com/glossary/activation-rate/)
+
+- **CAC payback and cross-sell spend** — formula: CAC ÷ (net new MRR ×
+  gross margin), healthy range 5–12 months. Upsell/cross-sell spend is
+  explicitly *not* part of traditional CAC and should be tracked separately
+  — this directly supports the paid-vs-organic CAC split in Section 6.
+  [CAC Payback Period: How to Calculate and Reduce It (Userpilot)](https://userpilot.com/blog/cac-payback/),
+  [CAC Payback Period (Chargebee)](https://www.chargebee.com/resources/glossaries/cac-payback-period/)
+
+- **Physical fulfillment SLA and churn** — subscription box operators
+  target ≥98% on-time delivery; below 95% signals a structural problem.
+  28% of subscription box cancellations are driven by poor delivery
+  experience, and nearly half of all cancellations happen within the first
+  90 days. Supports treating kit delivery SLA as the top operational risk
+  and the 0–120 day launch window framing.
+  [Subscription Box Fulfillment (Swell)](https://www.swell.is/content/subscription-box-fulfillment),
+  [Subscription Shipping Delays: Fix Shipping Churn Fast (Blustream)](https://blustream.ai/blog/subscription-shipping-delays-fix-shipping-churn-fast)
+
+- **Why LTV:CAC, NRR, and churn are excluded at launch** — NRR is only
+  considered reliable after 12–18 months of consistent customer data; LTV is
+  speculative pre-scale because ICP, pricing, and retention are still
+  unfixed; chasing churn too early is a documented early-stage mistake.
+  Supports the explicit out-of-scope decisions in Sections 2 and 6.
+  [LTV:CAC is a misleading metric to measure performance — here's what to
+  track instead (Stage 2 Capital)](https://www.stage2.capital/blog/ltvcac-is-a-misleading-metric-to-measure-performance-heres-what-to-track-instead)
