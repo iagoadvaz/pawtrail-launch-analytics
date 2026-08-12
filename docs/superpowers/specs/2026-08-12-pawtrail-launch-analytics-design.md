@@ -209,6 +209,14 @@ pawtrail-launch-analytics/
 
 ## 8. Validation approach
 
+- **Test-first modeling**: for each dbt model, the expected schema tests and
+  singular-test assertions (e.g., "combined activation rate must be within
+  [0, 1]", "every subscription must resolve to exactly one account") are
+  written and defined *before* the model's SQL is implemented, not
+  afterward. This is treated as an explicit engineering practice for the
+  project, not an afterthought — it plays the same role a TDD red/green
+  cycle plays in application code, adapted to declarative data
+  transformations.
 - dbt schema tests on all mart models (not_null, unique, relationships,
   accepted_values).
 - Singular dbt tests for metric sanity bounds (rates within [0, 1], no
