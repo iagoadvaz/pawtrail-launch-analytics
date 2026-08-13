@@ -116,16 +116,28 @@ on all mart keys and categorical fields, plus singular tests for sanity bounds
 
 ## 6. Metrics catalog (semantic layer)
 
-All metrics below are declared in the dbt Semantic Layer (MetricFlow) and are
-the authoritative, single source of truth for every number shown on the
-dashboard and in the narrative memo.
+Every metric below that is computable from this version's generated data is
+declared in the dbt Semantic Layer (MetricFlow), and the semantic layer is the
+authoritative, single source of truth for every number shown on the dashboard
+and in the narrative memo. No number is computed in Tableau or written by hand
+into the memo.
+
+A subset of the catalog is **deferred**, marked `[deferred]` below. Each one is
+blocked on a synthetic data stream this version does not generate — session
+events, cancellations, support contacts, lead-stage events, or spend tagged by
+source and region — not on analytical difficulty. `METRICS.md` lists each
+deferred metric against the specific source data it would need. This split is
+deliberate and is itself part of what the case study demonstrates: shipping a
+coherent, fully-sourced metric layer beats declaring a larger catalog that
+cannot be computed.
 
 **Acquisition / conversion**
 - Eligible Premium accounts (addressable universe)
 - Cumulative PawTrail subscriptions (total and week-over-week)
 - Attach rate (Premium → PawTrail) vs. launch target
-- Attach rate by channel (self-serve vs. sales-assisted)
-- Attach rate by segment (state, pet tier, Premium tenure before attach)
+- Attach rate by state/region
+- [deferred] Attach rate by channel (self-serve vs. sales-assisted)
+- [deferred] Attach rate by pet tier and by Premium tenure before attach
 - Conversion lag (days between becoming Premium and attaching PawTrail)
 - Week-over-week growth rate of new subscriptions (adoption curve shape)
 
@@ -134,26 +146,26 @@ dashboard and in the narrative memo.
 - % accounts with first kit delivered within promised SLA
 - Time from subscription to first digital access
 - Time from subscription to first kit delivered
-- Time from subscription to first completed care-plan task
+- [deferred] Time from subscription to first completed care-plan task
 - **Combined activation rate** at 7/14/30 days (digital + physical) — the
   phase's North Star metric
 - Digital-only activation rate / physical-only activation rate (isolates
   which leg is failing)
-- % pet profiles with complete onboarding
+- [deferred] % pet profiles with complete onboarding
 
 **Early engagement** (leading signal, not retention)
 - % of first-cycle tasks/content marked complete
-- Average app sessions in first 2–4 weeks
+- [deferred] Average app sessions in first 2–4 weeks
 - % accounts with at least 1 health/activity log in the first cycle
-- Repeat engagement rate within 30 days (2nd, 3rd session — habit-forming
+- [deferred] Repeat engagement rate within 30 days (2nd, 3rd session — habit-forming
   signal)
-- Feature adoption (which app features are used first)
+- [deferred] Feature adoption (which app features are used first)
 
 **Physical kit operations** (largest operational risk of the launch)
 - First-kit on-time delivery rate (SLA %)
 - Delay distribution (days late)
 - Lost/damaged kit rate
-- Complaint/replacement rate in the first cycle
+- [deferred] Complaint/replacement rate in the first cycle
 - Delivery SLA by state/region (surfaces problem geographies)
 
 **Early risk signals** (churn proxies — no churn data exists yet)
@@ -165,29 +177,43 @@ dashboard and in the narrative memo.
 
 **Business signals**
 - Incremental revenue from attach (aggregate MRR added, even at small N)
-- Cancellation-before-first-cycle rate (immediate regret signal, distinct
+- [deferred] Cancellation-before-first-cycle rate (immediate regret signal, distinct
   from mature churn)
-- Support/call-center contact volume and top reasons related to PawTrail
+- [deferred] Support/call-center contact volume and top reasons related to PawTrail
 
 **Acquisition efficiency (CAC and related)**
 - Attach CAC: marketing/sales spend allocated to the PawTrail campaign ÷ new
   subscriptions in the period
 - CAC by channel (self-serve vs. sales-assisted)
-- CAC by segment (state/region)
+- [deferred] CAC by segment (state/region)
 - Cost per activated account = CAC ÷ activation rate (more meaningful than
   raw CAC in launch phase, since an unactivated subscription is a weak signal)
 - Estimated payback period (CAC ÷ monthly contribution margin per
   subscription, where contribution margin = price − kit COGS − shipping)
 - ARPA (average revenue per account) for the add-on
 - Contribution margin per subscription (basic unit economics)
-- Cost per lead/pitch (sales-assisted channel, funnel stage above attach)
+- [deferred] Cost per lead/pitch (sales-assisted channel, funnel stage above attach)
 - Win rate for the sales-assisted channel (% of pitches that convert)
-- Paid vs. organic CAC split (in-app cross-sell should be near-zero CAC;
+- [deferred] Paid vs. organic CAC split (in-app cross-sell should be near-zero CAC;
   separating it from paid-campaign CAC is what should actually drive
   investment decisions)
 
-**Segmentation** (applied across all metrics above)
-State/region · pet tier/type · channel · Premium tenure before attach
+**Segmentation**
+State/region · pet tier/type · channel · Premium tenure before attach — all four
+available on the activation, engagement, kit-operations and risk metrics via
+`dim_accounts`.
+
+One exception, and it is a definitional one rather than a gap in the model:
+**attach rate can only be segmented by state**. Its denominator is the eligible
+Premium base, which is known per state and is not attributable to a channel, pet
+tier, or tenure band — an account's channel is a property of how it *attached*,
+so it does not exist for the accounts that never did. Segmenting attach rate by
+a dimension that only exists post-conversion would divide a channel-specific
+numerator by a whole-population denominator and read as a far lower rate than
+reality. Splitting the base by channel would require attributing the
+addressable universe to channels in the generator; until then those cuts are
+marked `[deferred]` above. Attach rate is also semi-additive: it may be grouped
+by week, or by week and state, but never by state alone.
 
 **North Star for the launch phase**: Combined 30-day activation rate — % of
 subscribing accounts with confirmed digital usage **and** an on-time first
@@ -221,7 +247,7 @@ throughout:
 ```
 pawtrail-launch-analytics/
 ├── data/
-│   ├── raw_olist/            # subset of the real Olist dataset
+│   ├── olist_reference/      # derived Olist distributions + fetch script
 │   └── generator/            # seeded Python script for synthetic data
 ├── pawtrail_dbt/             # dbt project: staging, intermediate, marts,
 │                              # MetricFlow semantic models + metrics

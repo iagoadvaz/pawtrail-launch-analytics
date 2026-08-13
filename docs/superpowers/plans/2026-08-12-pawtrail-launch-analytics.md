@@ -109,7 +109,19 @@ vars:
   kit_sla_days: 10
   digital_activation_window_days: 7
   at_risk_no_login_days: 14
+  # Spec §6 calls for combined activation at 7/14/30 days. 7 reuses
+  # digital_activation_window_days and 30 is the North Star window below; only
+  # the 14-day point needs its own var. It is kept separate from
+  # at_risk_no_login_days, which happens to share the value 14 but answers a
+  # different question — tying them together would mean retuning the risk queue
+  # every time the activation window moved.
+  combined_activation_mid_window_days: 14
   combined_activation_window_days: 30
+  # Must equal FIRST_CYCLE_TASK_COUNT in the generator (Task 4). It is the
+  # denominator of the task-completion rate, so a silent drift would not error —
+  # it would just report a wrong percentage. Task 7 adds a singular test that
+  # fails if any account completed more tasks than this allows.
+  first_cycle_task_count: 8
 
 models:
   pawtrail:
@@ -1367,6 +1379,7 @@ git commit -m "Orchestrate generators into dbt seed files"
 ## Task 7: Load seeds and build core staging models (test-first)
 
 **Files:**
+- Create: `pawtrail_dbt/tests/assert_task_count_matches_generator.sql`
 - Create: `pawtrail_dbt/models/staging/_staging__models.yml`
 - Create: `pawtrail_dbt/models/staging/stg_subscriptions.sql`
 - Create: `pawtrail_dbt/models/staging/stg_kit_deliveries.sql`
@@ -1387,6 +1400,19 @@ cd ..
 Expected: output shows `7 of 7 OK loaded seed file`.
 
 - [ ] **Step 2: Write the schema tests before the models exist (red step)**
+
+Create `pawtrail_dbt/tests/assert_task_count_matches_generator.sql`:
+
+```sql
+-- Fails (returns rows) if any account completed more first-cycle tasks than
+-- var('first_cycle_task_count') allows, which means that var has drifted from
+-- FIRST_CYCLE_TASK_COUNT in the generator (Task 4). The var is the denominator
+-- of task_completion_rate, so drift would not raise an error anywhere — it
+-- would quietly report a completion percentage against the wrong total.
+select account_id, care_tasks_completed_first_cycle
+from {{ ref('stg_digital_engagement') }}
+where care_tasks_completed_first_cycle > {{ var('first_cycle_task_count') }}
+```
 
 Create `pawtrail_dbt/models/staging/_staging__models.yml`:
 
@@ -1514,7 +1540,7 @@ git commit -m "Add core staging models with test-first schema tests"
 
 **Interfaces:**
 - Consumes: `stg_subscriptions`, `stg_kit_deliveries`, `stg_digital_engagement` from Task 7.
-- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date, observation_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, days_observed, digital_activated_7d, kit_activated_sla, no_digital_access_14d, is_mature_7d, is_mature_sla, is_mature_30d, combined_activated_30d)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` and by `combined_activated_30d` instead of being recomputed.
+- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date, observation_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, days_late, days_observed, digital_activated_7d, kit_activated_sla, no_digital_access_14d, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, combined_activated_7d, combined_activated_14d, combined_activated_30d)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` and by every `combined_activated_*` flag instead of being recomputed.
 - **Cohort maturity:** the `is_mature_*` flags mark accounts that have had the full activation window to succeed or fail. Every activation rate in Task 15 is restricted to the matching mature cohort, so recent signups are not silently counted as failures.
 
 - [ ] **Step 1: Write the singular test before the model exists (red step)**
@@ -1552,9 +1578,13 @@ Create `pawtrail_dbt/tests/assert_combined_activation_requires_on_time_kit.sql`:
 -- fully activated because almost every kit arrives inside 30 days.
 select account_id
 from {{ ref('int_activation_funnel') }}
-where combined_activated_30d
+where (combined_activated_30d or combined_activated_14d or combined_activated_7d)
   and not kit_activated_sla
 ```
+
+All three horizons are checked, not just the North Star. The 7- and 14-day
+variants shorten the digital window only; if a later edit ever relaxes their
+physical leg to "delivered within N days", this test is what catches it.
 
 - [ ] **Step 2: Write the schema tests before the model exists**
 
@@ -1665,7 +1695,29 @@ flagged as (
         -- the full window.
         (days_observed >= {{ var('digital_activation_window_days') }}) as is_mature_7d,
         (days_observed >= {{ var('kit_sla_days') }}) as is_mature_sla,
-        (days_observed >= {{ var('combined_activation_window_days') }}) as is_mature_30d
+        (days_observed >= {{ var('combined_activation_window_days') }}) as is_mature_30d,
+        -- A *combined* rate needs both legs to have had their chance, so its
+        -- maturity is the later of the digital window and the kit SLA, not the
+        -- digital window alone. At the 7-day point the SLA (10 days) is the
+        -- binding constraint: an account 8 days old could still receive an
+        -- on-time kit, so judging it at day 7 would book a pending kit as a
+        -- failure. This is why is_mature_combined_7d is not is_mature_7d.
+        -- The 30-day flag needs no such treatment because 30 already exceeds
+        -- every window.
+        (days_observed >= greatest(
+            {{ var('digital_activation_window_days') }}, {{ var('kit_sla_days') }}
+        )) as is_mature_combined_7d,
+        (days_observed >= greatest(
+            {{ var('combined_activation_mid_window_days') }}, {{ var('kit_sla_days') }}
+        )) as is_mature_combined_14d,
+        -- Days past the SLA, null when the kit arrived on time or never came.
+        -- Feeds the delay-distribution metric (spec §6, kit operations).
+        case
+            when kit_delivered_date is not null
+                 and not kit_lost
+                 and days_to_kit_delivery > {{ var('kit_sla_days') }}
+            then days_to_kit_delivery - {{ var('kit_sla_days') }}
+        end as days_late
     from joined
 )
 
@@ -1680,7 +1732,21 @@ select
         first_login_date is not null
         and days_to_first_login <= {{ var('combined_activation_window_days') }}
         and kit_activated_sla
-    ) as combined_activated_30d
+    ) as combined_activated_30d,
+    -- The 7- and 14-day readings of the same definition. Only the digital leg's
+    -- window shortens; the physical leg stays "hit the SLA" at every horizon,
+    -- because the spec's on-time constraint is a property of the delivery
+    -- promise, not of the reporting window.
+    (
+        first_login_date is not null
+        and days_to_first_login <= {{ var('digital_activation_window_days') }}
+        and kit_activated_sla
+    ) as combined_activated_7d,
+    (
+        first_login_date is not null
+        and days_to_first_login <= {{ var('combined_activation_mid_window_days') }}
+        and kit_activated_sla
+    ) as combined_activated_14d
 from flagged
 ```
 
@@ -1749,7 +1815,7 @@ git commit -m "Add activation funnel with cohort maturity and SLA-based North St
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` from Task 7.
-- Produces: `dim_accounts(account_id, state, pet_tier, channel, premium_tenure_days, premium_tenure_band)`, referenced by Task 10 (join) and Task 14's `accounts` semantic model; `fct_subscriptions(account_id, pawtrail_signup_date, signup_week)`, referenced by Task 10's singular test and Task 14's `subscriptions` semantic model.
+- Produces: `dim_accounts(account_id, state, pet_tier, channel, premium_tenure_days, premium_tenure_band)`, referenced by Task 10 (join) and Task 14's `accounts` semantic model; `fct_subscriptions(account_id, pawtrail_signup_date, signup_week, conversion_lag_days)`, referenced by Task 10's singular test and Task 14's `subscriptions` semantic model.
 - **Premium tenure is carried through to the mart**, not dropped at the intermediate layer. Spec §6 lists "Premium tenure before attach" as a segmentation dimension applied across all metrics, and Task 3 already generates the column with a deliberate negative correlation against signup day so the segment carries real signal. Leaving it in `int_activation_funnel` only would make that generated signal unqueryable from the semantic layer.
 
 - [ ] **Step 1: Write the schema tests before the models exist**
@@ -1857,7 +1923,13 @@ Create `pawtrail_dbt/models/marts/fct_subscriptions.sql`:
 select
     account_id,
     pawtrail_signup_date,
-    date_trunc('week', pawtrail_signup_date) as signup_week
+    date_trunc('week', pawtrail_signup_date) as signup_week,
+    -- Conversion lag (spec §6): days between becoming Premium and attaching
+    -- PawTrail. That is exactly what premium_tenure_days measures, since tenure
+    -- is recorded as of the attach date. It is carried here rather than measured
+    -- off dim_accounts because a MetricFlow measure needs an aggregation time
+    -- dimension, and this model is the one with signup_date.
+    premium_tenure_days as conversion_lag_days
 from {{ ref('stg_subscriptions') }}
 ```
 
@@ -1890,7 +1962,7 @@ git commit -m "Add dim_accounts and fct_subscriptions marts"
 
 **Interfaces:**
 - Consumes: `int_activation_funnel` (Task 8), `stg_kit_deliveries` (Task 7), `dim_accounts` and `fct_subscriptions` (Task 9).
-- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_30d, no_digital_access_14d, days_to_first_login, days_to_kit_delivery, days_observed, is_mature_7d, is_mature_sla, is_mature_30d, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, pawtrail_signup_date, kit_delivered_date, kit_lost, delivery_duration_days, kit_activated_sla, is_mature_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
+- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_7d, combined_activated_14d, combined_activated_30d, no_digital_access_14d, days_to_first_login, days_to_kit_delivery, days_observed, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, pawtrail_signup_date, kit_delivered_date, kit_lost, delivery_duration_days, days_late, kit_activated_sla, is_mature_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
 
 - [ ] **Step 1: Write the singular test before the models exist**
 
@@ -1965,6 +2037,8 @@ select
     pawtrail_signup_date,
     digital_activated_7d,
     kit_activated_sla,
+    combined_activated_7d,
+    combined_activated_14d,
     combined_activated_30d,
     no_digital_access_14d,
     days_to_first_login,
@@ -1973,6 +2047,8 @@ select
     is_mature_7d,
     is_mature_sla,
     is_mature_30d,
+    is_mature_combined_7d,
+    is_mature_combined_14d,
     care_tasks_completed_first_cycle
 from {{ ref('int_activation_funnel') }}
 ```
@@ -1987,6 +2063,11 @@ select
     k.kit_delivered_date,
     k.kit_lost,
     k.delivery_duration_days,
+    -- Days past the SLA, null for on-time and lost kits. Averaging this gives
+    -- "how late are the late ones", which is the operationally useful read; a
+    -- version that coalesced on-time kits to 0 would instead report a diluted
+    -- fleet-wide average that moves with volume rather than with lateness.
+    f.days_late,
     f.kit_activated_sla,
     -- Carried so the on-time rate can exclude accounts whose SLA window has not
     -- closed yet, matching the cohort treatment of the activation rates.
@@ -2443,7 +2524,7 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` (Task 7), `int_activation_funnel` (Task 8), `fct_marketing_spend` and `dim_pricing` (Task 11).
-- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, spend_usd, cac, cost_per_activated_account, avg_price, contribution_margin_per_subscription)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list.
+- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, spend_usd, cac, cost_per_activated_account, avg_price, mrr_usd, contribution_margin_per_subscription, cac_payback_months)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list.
 
 - [ ] **Step 1: Write the schema tests before the model exists**
 
@@ -2528,6 +2609,10 @@ weekly_subs as (
         sum(case when combined_activated_30d and is_mature_30d then 1 else 0 end)
             as activated_subscriptions,
         avg(monthly_price_usd) as avg_price,
+        -- Incremental MRR added by the attach (spec §6, business signals). Summed
+        -- at each account's own tier price, so the pet-tier mix moves it; a
+        -- headcount times a blended price would not.
+        sum(monthly_price_usd) as mrr_usd,
         avg(contribution_margin) as contribution_margin_per_subscription
     from subs_priced
     group by 1, 2
@@ -2557,7 +2642,14 @@ select
     -- artificially catastrophic cost per activated account.
     s.spend_usd / nullif(w.activated_subscriptions, 0) as cost_per_activated_account,
     w.avg_price,
-    w.contribution_margin_per_subscription
+    w.mrr_usd,
+    w.contribution_margin_per_subscription,
+    -- CAC payback in months (spec §6): acquisition cost divided by the monthly
+    -- contribution margin it buys. Computed here rather than as a derived metric
+    -- because both inputs already live at this grain, and nullif keeps a
+    -- zero-or-negative-margin week from producing an infinite payback.
+    (s.spend_usd / nullif(w.new_subscriptions, 0))
+        / nullif(w.contribution_margin_per_subscription, 0) as cac_payback_months
 from weekly_subs w
 left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
 ```
@@ -2792,6 +2884,10 @@ semantic_models:
       - name: subscription_count
         agg: count
         expr: account_id
+      # Conversion lag (spec §6): average days from becoming Premium to attaching.
+      - name: avg_conversion_lag_days
+        agg: average
+        expr: conversion_lag_days
 
   - name: activation_events
     model: ref('fct_activation_events')
@@ -2822,15 +2918,71 @@ semantic_models:
       - name: mature_accounts_30d
         agg: sum
         expr: case when is_mature_30d then 1 else 0 end
+      # Combined rates use their own maturity flags, which are the later of the
+      # digital window and the kit SLA. Pairing combined_activated_7d with
+      # mature_accounts_7d instead would count accounts whose SLA window is still
+      # open as combined-activation failures.
+      - name: mature_accounts_combined_7d
+        agg: sum
+        expr: case when is_mature_combined_7d then 1 else 0 end
+      - name: mature_accounts_combined_14d
+        agg: sum
+        expr: case when is_mature_combined_14d then 1 else 0 end
       - name: digitally_activated_accounts
         agg: sum
         expr: case when digital_activated_7d and is_mature_7d then 1 else 0 end
       - name: kit_activated_accounts
         agg: sum
         expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
+      - name: combined_activated_accounts_7d
+        agg: sum
+        expr: case when combined_activated_7d and is_mature_combined_7d then 1 else 0 end
+      - name: combined_activated_accounts_14d
+        agg: sum
+        expr: case when combined_activated_14d and is_mature_combined_14d then 1 else 0 end
       - name: combined_activated_accounts_30d
         agg: sum
         expr: case when combined_activated_30d and is_mature_30d then 1 else 0 end
+      # Early risk counts (spec §6). Both are restricted to accounts old enough
+      # to be judged, for the same reason the activation rates are.
+      - name: zero_digital_access_accounts
+        agg: sum
+        expr: case when no_digital_access_14d and is_mature_combined_14d then 1 else 0 end
+      - name: zero_task_accounts
+        agg: sum
+        expr: >-
+          case when coalesce(care_tasks_completed_first_cycle, 0) = 0
+               and is_mature_30d then 1 else 0 end
+      # Time-to-milestone averages (spec §6, activation). Null for accounts that
+      # never logged in or never received a kit, and avg skips nulls, so these
+      # read as "how fast for those who got there" rather than being dragged
+      # toward zero by accounts that never arrived.
+      - name: avg_days_to_first_login
+        agg: average
+        expr: days_to_first_login
+      - name: avg_days_to_kit_delivery
+        agg: average
+        expr: days_to_kit_delivery
+      # First-cycle task engagement (spec §6, early engagement). Two different
+      # questions: `tasks_completed` over `tasks_available` is how much of the
+      # care plan got done, while `task_engaged_accounts` over the mature cohort
+      # is how many people started at all. A launch can score well on the second
+      # and badly on the first, which is the interesting case.
+      - name: tasks_completed
+        agg: sum
+        expr: >-
+          case when is_mature_30d
+               then coalesce(care_tasks_completed_first_cycle, 0) else 0 end
+      - name: tasks_available
+        agg: sum
+        expr: >-
+          case when is_mature_30d
+               then {{ var('first_cycle_task_count') }} else 0 end
+      - name: task_engaged_accounts
+        agg: sum
+        expr: >-
+          case when coalesce(care_tasks_completed_first_cycle, 0) >= 1
+               and is_mature_30d then 1 else 0 end
 
   - name: kit_deliveries
     model: ref('fct_kit_deliveries')
@@ -2867,6 +3019,16 @@ semantic_models:
       - name: kits_lost
         agg: sum
         expr: case when kit_lost and is_mature_sla then 1 else 0 end
+      # Delay distribution (spec §6, kit operations). days_late is null for
+      # on-time and lost kits, and `average` skips nulls, so this answers "when
+      # a kit is late, how late" rather than diluting the figure with the
+      # on-time majority.
+      - name: avg_days_late
+        agg: average
+        expr: days_late
+      - name: kits_late
+        agg: sum
+        expr: case when days_late is not null and is_mature_sla then 1 else 0 end
 
   - name: weekly_attach
     model: ref('fct_weekly_attach')
@@ -2932,6 +3094,14 @@ semantic_models:
       - name: avg_contribution_margin
         agg: average
         expr: contribution_margin_per_subscription
+      # Incremental MRR sums across channels and weeks, so unlike attach rate it
+      # is safe to group by either or neither.
+      - name: mrr_added_usd
+        agg: sum
+        expr: mrr_usd
+      - name: avg_cac_payback_months
+        agg: average
+        expr: cac_payback_months
 
   - name: sales_pitches
     model: ref('fct_sales_pitches')
@@ -3022,7 +3192,7 @@ git commit -m "Add MetricFlow semantic models over the marts layer"
 
 **Interfaces:**
 - Consumes: every measure defined in Task 14's semantic models.
-- Produces: 17 named metrics queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
+- Produces: 29 named metrics queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
 
 - [ ] **Step 1: Define the metrics**
 
@@ -3036,12 +3206,32 @@ metrics:
     type_params:
       measure: subscription_count
 
+  - name: eligible_premium_accounts
+    type: simple
+    label: "Eligible Premium Accounts (addressable universe)"
+    type_params:
+      measure: eligible_premium_accounts
+
   - name: attach_rate
     type: ratio
     label: "Attach Rate (Premium to PawTrail)"
     type_params:
       numerator: cumulative_subscriptions
       denominator: eligible_premium_accounts
+
+  - name: task_completion_rate
+    type: ratio
+    label: "First-Cycle Task Completion Rate"
+    type_params:
+      numerator: tasks_completed
+      denominator: tasks_available
+
+  - name: task_engagement_rate
+    type: ratio
+    label: "Accounts Completing At Least One First-Cycle Task"
+    type_params:
+      numerator: task_engaged_accounts
+      denominator: mature_accounts_30d
 
   # Every activation rate divides by its matching *mature* cohort, not by all
   # accounts. See Task 8: an account that has not yet had the full window has
@@ -3061,12 +3251,107 @@ metrics:
       numerator: kit_activated_accounts
       denominator: mature_accounts_sla
 
+  # Spec §6 asks for combined activation at 7/14/30 days. Only the digital leg's
+  # window shortens across the three; the physical leg stays "hit the SLA" at
+  # every horizon. Each divides by its own maturity cohort — see Task 8 for why
+  # the 7-day version is gated on the SLA rather than on 7 days.
+  - name: activation_rate_7d
+    type: ratio
+    label: "Combined 7-Day Activation Rate (mature cohort)"
+    type_params:
+      numerator: combined_activated_accounts_7d
+      denominator: mature_accounts_combined_7d
+
+  - name: activation_rate_14d
+    type: ratio
+    label: "Combined 14-Day Activation Rate (mature cohort)"
+    type_params:
+      numerator: combined_activated_accounts_14d
+      denominator: mature_accounts_combined_14d
+
   - name: activation_rate_30d
     type: ratio
     label: "Combined 30-Day Activation Rate (mature cohort)"
     type_params:
       numerator: combined_activated_accounts_30d
       denominator: mature_accounts_30d
+
+  - name: avg_days_to_first_login
+    type: simple
+    label: "Avg Days to First Digital Access"
+    type_params:
+      measure: avg_days_to_first_login
+
+  - name: avg_days_to_kit_delivery
+    type: simple
+    label: "Avg Days to First Kit Delivered"
+    type_params:
+      measure: avg_days_to_kit_delivery
+
+  - name: conversion_lag_days
+    type: simple
+    label: "Avg Conversion Lag (Premium to PawTrail, days)"
+    type_params:
+      measure: avg_conversion_lag_days
+
+  # Week-over-week growth of new subscriptions (spec §6, adoption curve shape).
+  # Derived from the same measure at a one-week offset, so the shape and the
+  # level can never disagree.
+  - name: wow_subscription_growth
+    type: derived
+    label: "Week-over-Week Subscription Growth"
+    type_params:
+      expr: (current_week - prior_week) / nullif(prior_week, 0)
+      metrics:
+        - name: weekly_new_subscriptions
+          alias: current_week
+        - name: weekly_new_subscriptions
+          offset_window: 1 week
+          alias: prior_week
+
+  - name: zero_digital_access_accounts
+    type: simple
+    label: "Accounts With No Digital Access in 14 Days"
+    type_params:
+      measure: zero_digital_access_accounts
+
+  - name: zero_task_accounts
+    type: simple
+    label: "Accounts With Zero Completed Tasks in the First Cycle"
+    type_params:
+      measure: zero_task_accounts
+
+  - name: avg_delivery_delay_days
+    type: simple
+    label: "Avg Days Late (late kits only)"
+    type_params:
+      measure: avg_days_late
+
+  - name: kit_late_rate
+    type: ratio
+    label: "Kit Late Rate"
+    type_params:
+      numerator: kits_late
+      denominator: kits_shipped
+
+  - name: incremental_mrr
+    type: simple
+    label: "Incremental MRR Added by Attach"
+    type_params:
+      measure: mrr_added_usd
+
+  - name: arpa
+    type: ratio
+    label: "ARPA (average revenue per account)"
+    type_params:
+      numerator: mrr_added_usd
+      denominator: channel_new_subscriptions
+
+  - name: cac_payback_months
+    type: simple
+    label: "Estimated CAC Payback (months)"
+    type_params:
+      measure: avg_cac_payback_months
 
   - name: mature_cohort_size_30d
     type: simple
@@ -3148,11 +3433,26 @@ cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 dbt parse --profiles-dir .
 mf validate-configs
-mf list metrics
+
+# Compare what the YAML declares against what MetricFlow actually registered,
+# rather than against a number written down here. A hardcoded count silently
+# goes stale the next time a metric is added, and a stale count is worse than
+# no count: it fails a green build and sends whoever is executing this plan
+# looking for a metric that was never missing.
+expected=$(grep -c '^  - name:' models/marts/_metrics.yml)
+actual=$(mf list metrics | grep -c '^ *- ')
+if [ "$expected" = "$actual" ]; then
+  echo "OK: $actual metrics registered"
+else
+  echo "MISMATCH: yml declares $expected, mf registered $actual"
+fi
 cd ..
 ```
 
-Expected: `mf list metrics` shows all 17 metrics defined above.
+Expected: `OK: <n> metrics registered`, where `<n>` matches the metrics defined
+in Step 1. A mismatch means a metric parsed but failed to register — usually a
+measure referenced by a `type_params` block that does not exist on any semantic
+model.
 
 - [ ] **Step 3: Run the acceptance query — confirm the injected problem segment is actually surfaced**
 
@@ -3201,7 +3501,9 @@ export DBT_PROFILES_DIR="$PWD"
 mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
 mf query --metrics cumulative_subscriptions_to_date,attach_rate --group-by weekly_attach__signup_week --csv ../dashboard/control_attach_rate.csv
 mf query --metrics attach_rate --group-by weekly_attach__signup_week,weekly_attach__state --csv ../dashboard/control_attach_rate_by_state.csv
-mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
+mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_7d,activation_rate_14d,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
+mf query --metrics avg_days_to_first_login,avg_days_to_kit_delivery,conversion_lag_days --group-by metric_time__week --csv ../dashboard/control_time_to_milestone.csv
+mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel --csv ../dashboard/control_unit_economics.csv
 mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by kit_deliveries__state --csv ../dashboard/control_kit_sla_by_state.csv
 mf query --metrics cac_by_channel,cost_per_activated_account --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel --csv ../dashboard/control_cac_by_channel.csv
 mf query --metrics at_risk_account_rate,at_risk_accounts --group-by at_risk_accounts__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
@@ -3209,7 +3511,19 @@ mf query --metrics win_rate --group-by sales_pitches__state --csv ../dashboard/c
 cd ..
 ```
 
-Expected: 8 CSV files created under `dashboard/` — these become both the Tableau data source and the ground truth Task 19's narrative memo must match.
+Expected: one CSV under `dashboard/` per `--csv` invocation above, each
+non-empty. These become both the Tableau data source and the ground truth Task
+19's narrative memo must match. Verify with:
+
+```bash
+for f in dashboard/control_*.csv; do
+  echo "$(wc -l < "$f") lines  $f"
+done
+```
+
+Any file at 1 line is headers only, which means the metric registered but
+returned no rows — usually a group-by dimension that does not exist on the
+semantic model the metric draws from.
 
 Each export now matches a view in Task 16: the attach exports carry both the
 national trend and the by-state breakdown the launch-pulse view calls for, the
@@ -3419,13 +3733,13 @@ git commit -m "Add project README"
 - Create: `METRICS.md`
 
 **Interfaces:**
-- Consumes: the 12 metrics defined in Task 15's `_metrics.yml`.
+- Consumes: every metric defined in Task 15's `_metrics.yml`.
 
 - [ ] **Step 1: Write the metrics dictionary**
 
 Create `METRICS.md` mirroring the MetricFlow definitions in
-`pawtrail_dbt/models/marts/_metrics.yml` in human-readable form. For each of
-the 17 metrics listed there, include: name, one-sentence business
+`pawtrail_dbt/models/marts/_metrics.yml` in human-readable form. For every
+metric listed there, include: name, one-sentence business
 definition, formula (numerator/denominator or measure), and which
 semantic model(s) it draws from. Structure the document in the same five
 categories used in the dashboard (Task 16): Launch pulse, Activation, Kit
@@ -3446,12 +3760,29 @@ interviewer will probe:
   weeks, so `attach_rate` is valid grouped by week, or by week and region, and
   must never be grouped by region alone.
 
-End the document with a **Future extensions** section listing
-catalog metrics from the spec (`docs/superpowers/specs/2026-08-12-pawtrail-launch-analytics-design.md`
-§6) that were deliberately not implemented as MetricFlow metrics in this
-version — e.g., cost per lead, paid-vs-organic CAC split, ARPA as a
-standalone metric — noting they'd require additional generator data
-(lead-level events, spend-source tagging) beyond this version's scope.
+End the document with a **Future extensions** section listing the catalog
+metrics from spec §6 that are not implemented here, each with the specific
+source data it would need. Every metric computable from the existing generator
+output is already implemented, so this list is exactly the set blocked on new
+synthetic data — which is the honest version of the section, and a more
+defensible answer in an interview than a generic "out of scope":
+
+| Not implemented | Blocked on |
+|---|---|
+| App sessions in first 2–4 weeks, repeat engagement rate, feature adoption | Session-level event stream; the generator emits a first-login date and a task count, not sessions |
+| Time to first completed care-plan task | A first-task timestamp; `care_tasks_completed_first_cycle` is a count with no date |
+| % pet profiles with complete onboarding | An onboarding-completeness field on the account |
+| Cancellation-before-first-cycle rate | Cancellation events; the launch window carries no churn signal by design |
+| Support/call-center contact volume and top reasons | A support-contact stream with reason codes |
+| Complaint/replacement rate in the first cycle | Complaint and replacement events |
+| Cost per lead/pitch | Lead-stage events above the pitch; only pitch outcomes exist |
+| Paid vs. organic CAC split | Spend-source tagging on `raw_marketing_spend` |
+| CAC by state/region | Spend allocated by state; spend is generated per week × channel only |
+
+Note that the first two rows are the ones an interviewer is most likely to
+probe, because engagement depth is the natural follow-up to an activation
+story. The honest answer is that measuring it needs event-level data the
+launch simulation does not produce, not that it was judged unimportant.
 
 - [ ] **Step 2: Commit**
 
