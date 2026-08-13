@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: stg_subscriptions
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+      - name: state
+        tests:
+          - not_null
+      - name: pet_tier
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['small', 'medium', 'large']
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['self_serve', 'sales_assisted']
+      - name: pawtrail_signup_date
+        tests:
+          - not_null
+
+  - name: stg_kit_deliveries
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('stg_subscriptions')
+              field: account_id
+
+  - name: stg_digital_engagement
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('stg_subscriptions')
+              field: account_id
