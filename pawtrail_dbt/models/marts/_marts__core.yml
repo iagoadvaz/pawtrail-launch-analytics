@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  # Categorical marts columns carry accepted_values as well as not_null, per
+  # spec §5. The enum lists are duplicated from the staging tests deliberately:
+  # staging proves the generator emitted clean values, the mart proves the
+  # transformation preserved them. A mart-layer bug that mangles a category
+  # cannot be caught by a staging test.
+  #
+  # `state` is deliberately NOT given accepted_values here. State codes come from
+  # the Olist-derived distribution truncated to the top N (Task 2), so a literal
+  # list would hard-code `n_states` into a test and fail spuriously whenever that
+  # config changes. It gets a relationships test against fct_premium_base instead,
+  # added in Task 11 once that model exists.
+  - name: dim_accounts
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+      - name: state
+        tests:
+          - not_null
+      - name: pet_tier
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['small', 'medium', 'large']
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+      - name: premium_tenure_days
+        tests:
+          - not_null
+      # The band, not the raw day count, is what the semantic layer exposes as a
+      # dimension. Grouping a metric by premium_tenure_days would return one row
+      # per distinct day (~870 of them), which is not a segmentation.
+      - name: premium_tenure_band
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['0-180', '181-365', '366-730', '731+']
+
+  - name: fct_subscriptions
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: pawtrail_signup_date
+        tests:
+          - not_null
