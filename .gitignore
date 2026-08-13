@@ -13,6 +13,7 @@ venv/
 pawtrail_dbt/target/
 pawtrail_dbt/dbt_packages/
 pawtrail_dbt/logs/
+pawtrail_dbt/.user.yml
 
 # DuckDB
 *.duckdb
