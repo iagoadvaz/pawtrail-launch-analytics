@@ -18,9 +18,14 @@ models:
         tests:
           - unique
           - not_null
+      # relationships added in Task 11, once fct_premium_base exists to point at.
       - name: state
         tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state
       - name: pet_tier
         tests:
           - not_null
@@ -93,3 +98,7 @@ models:
       - name: state
         tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state

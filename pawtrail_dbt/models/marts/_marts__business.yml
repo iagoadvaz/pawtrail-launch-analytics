@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: dim_pricing
+    columns:
+      - name: pet_tier
+        tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['small', 'medium', 'large']
+
+  # fct_premium_base is the state reference for the whole project: it is the
+  # only model with one guaranteed-unique row per state, so every other model's
+  # state column is tested against it.
+  - name: fct_premium_base
+    columns:
+      - name: state
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_marketing_spend
+    columns:
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+
+  - name: fct_sales_pitches
+    columns:
+      - name: pitch_id
+        tests:
+          - unique
+          - not_null
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state

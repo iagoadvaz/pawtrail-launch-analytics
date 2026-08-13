@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: stg_pricing
+    columns:
+      - name: pet_tier
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_premium_base
+    columns:
+      - name: state
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_marketing_spend
+    columns:
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+
+  - name: stg_sales_pitches
+    columns:
+      - name: pitch_id
+        tests:
+          - unique
+          - not_null
+      - name: won
+        tests:
+          - not_null
