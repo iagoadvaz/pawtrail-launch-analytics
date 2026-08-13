@@ -1,0 +1,13 @@
+models:
+  - name: metricflow_time_spine
+    description: >
+      Day-grain time spine required by the dbt Semantic Layer. Not part of any
+      task brief's file list; added because `dbt parse` hard-fails as soon as
+      any `_semantic_models.yml` exists in the project without one. See the
+      model's own header comment for why generate_series is used instead of
+      dbt_utils.date_spine.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day

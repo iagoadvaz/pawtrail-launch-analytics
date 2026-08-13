@@ -1,0 +1,321 @@
+semantic_models:
+  - name: accounts
+    model: ref('dim_accounts')
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      - name: state
+        type: categorical
+      - name: pet_tier
+        type: categorical
+      - name: channel
+        type: categorical
+      # Completes spec §6's segmentation set (state, pet tier, channel, Premium
+      # tenure before attach). The banded column is exposed rather than the raw
+      # day count so `--group-by accounts__premium_tenure_band` returns four
+      # comparable cohorts instead of one row per distinct tenure value.
+      - name: premium_tenure_band
+        type: categorical
+
+  - name: subscriptions
+    model: ref('fct_subscriptions')
+    defaults:
+      agg_time_dimension: signup_date
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      - name: signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
+    measures:
+      - name: subscription_count
+        agg: count
+        expr: account_id
+      # Conversion lag (spec §6): average days from becoming Premium to attaching.
+      - name: avg_conversion_lag_days
+        agg: average
+        expr: conversion_lag_days
+
+  - name: activation_events
+    model: ref('fct_activation_events')
+    defaults:
+      agg_time_dimension: activation_signup_date
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      # Named uniquely per model rather than `signup_date`: MetricFlow forbids
+      # the same (primary entity, dimension name) pair on more than one
+      # semantic model, and `subscriptions` already owns the bare name. Every
+      # query in this plan reaches time via the universal `metric_time`
+      # alias, never this model-qualified name directly, so the rename has no
+      # downstream impact.
+      - name: activation_signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
+    # Numerator and denominator are both restricted to the cohort that has had
+    # the full window. Counting an account that signed up four days ago as a
+    # failed 30-day activation is the classic launch-analytics error: it drags
+    # the North Star down hardest in the most recent weeks, which are exactly
+    # the weeks a launch dashboard is read for.
+    measures:
+      - name: mature_accounts_7d
+        agg: sum
+        expr: case when is_mature_7d then 1 else 0 end
+      - name: mature_accounts_sla
+        agg: sum
+        expr: case when is_mature_sla then 1 else 0 end
+      - name: mature_accounts_30d
+        agg: sum
+        expr: case when is_mature_30d then 1 else 0 end
+      # Combined rates use their own maturity flags, which are the later of the
+      # digital window and the kit SLA. Pairing combined_activated_7d with
+      # mature_accounts_7d instead would count accounts whose SLA window is still
+      # open as combined-activation failures.
+      - name: mature_accounts_combined_7d
+        agg: sum
+        expr: case when is_mature_combined_7d then 1 else 0 end
+      - name: mature_accounts_combined_14d
+        agg: sum
+        expr: case when is_mature_combined_14d then 1 else 0 end
+      - name: digitally_activated_accounts
+        agg: sum
+        expr: case when digital_activated_7d and is_mature_7d then 1 else 0 end
+      - name: kit_activated_accounts
+        agg: sum
+        expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
+      - name: combined_activated_accounts_7d
+        agg: sum
+        expr: case when combined_activated_7d and is_mature_combined_7d then 1 else 0 end
+      - name: combined_activated_accounts_14d
+        agg: sum
+        expr: case when combined_activated_14d and is_mature_combined_14d then 1 else 0 end
+      - name: combined_activated_accounts_30d
+        agg: sum
+        expr: case when combined_activated_30d and is_mature_30d then 1 else 0 end
+      # Early risk counts (spec §6). Both are restricted to accounts old enough
+      # to be judged, for the same reason the activation rates are.
+      - name: zero_digital_access_accounts
+        agg: sum
+        expr: case when no_digital_access_14d and is_mature_combined_14d then 1 else 0 end
+      - name: zero_task_accounts
+        agg: sum
+        expr: >-
+          case when coalesce(care_tasks_completed_first_cycle, 0) = 0
+               and is_mature_30d then 1 else 0 end
+      # Time-to-milestone averages (spec §6, activation). Null for accounts that
+      # never logged in or never received a kit, and avg skips nulls, so these
+      # read as "how fast for those who got there" rather than being dragged
+      # toward zero by accounts that never arrived.
+      - name: avg_days_to_first_login
+        agg: average
+        expr: days_to_first_login
+      - name: avg_days_to_kit_delivery
+        agg: average
+        expr: days_to_kit_delivery
+      # First-cycle task engagement (spec §6, early engagement). Two different
+      # questions: `tasks_completed` over `tasks_available` is how much of the
+      # care plan got done, while `task_engaged_accounts` over the mature cohort
+      # is how many people started at all. A launch can score well on the second
+      # and badly on the first, which is the interesting case.
+      - name: tasks_completed
+        agg: sum
+        expr: >-
+          case when is_mature_30d
+               then coalesce(care_tasks_completed_first_cycle, 0) else 0 end
+      - name: tasks_available
+        agg: sum
+        expr: >-
+          case when is_mature_30d
+               then {{ var('first_cycle_task_count') }} else 0 end
+      - name: task_engaged_accounts
+        agg: sum
+        expr: >-
+          case when coalesce(care_tasks_completed_first_cycle, 0) >= 1
+               and is_mature_30d then 1 else 0 end
+
+  - name: kit_deliveries
+    model: ref('fct_kit_deliveries')
+    # Measures need an aggregation time dimension for MetricFlow to validate and
+    # for metric_time to resolve. Signup date is used rather than delivery date:
+    # delivery date is null for lost kits, which are exactly the rows the lost
+    # rate must not drop.
+    defaults:
+      agg_time_dimension: kit_signup_date
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      # Named uniquely per model (see the note above `activation_events`) —
+      # `subscriptions` owns the bare `signup_date` name.
+      - name: kit_signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
+      # No local `state` dimension: `accounts` already owns it under the same
+      # `account` primary entity (see the note above `activation_events`).
+      # Query kit-delivery metrics grouped by `accounts__state`, not
+      # `kit_deliveries__state` — same values (`fct_kit_deliveries.state` is
+      # itself sourced from `dim_accounts` via a join in Task 10), one owner.
+    measures:
+      # `kits_shipped` counts every account with a kit obligation, including
+      # lost ones. The earlier name `kits_delivered` was misleading: it was used
+      # as the denominator of the on-time rate while actually counting kits that
+      # never arrived, so "on-time delivery rate" and "lost rate" were quietly
+      # measured against different populations than their names implied.
+      - name: kits_shipped
+        agg: sum
+        expr: case when is_mature_sla then 1 else 0 end
+      - name: kits_on_time
+        agg: sum
+        expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
+      - name: kits_lost
+        agg: sum
+        expr: case when kit_lost and is_mature_sla then 1 else 0 end
+      # Delay distribution (spec §6, kit operations). days_late is null for
+      # on-time and lost kits, and `average` skips nulls, so this answers "when
+      # a kit is late, how late" rather than diluting the figure with the
+      # on-time majority.
+      - name: avg_days_late
+        agg: average
+        expr: days_late
+      - name: kits_late
+        agg: sum
+        expr: case when days_late is not null and is_mature_sla then 1 else 0 end
+
+  - name: weekly_attach
+    model: ref('fct_weekly_attach')
+    defaults:
+      agg_time_dimension: signup_week
+    entities:
+      # Surrogate key, not `state`: the grain is (state, week), so `state` alone
+      # is not unique and declaring it primary is a false uniqueness claim that
+      # can fan out joins.
+      - name: weekly_attach_row
+        type: primary
+        expr: weekly_attach_key
+    dimensions:
+      - name: state
+        type: categorical
+      - name: signup_week
+        type: time
+        type_params:
+          time_granularity: week
+    # Both measures are semi-additive: they sum correctly ACROSS states within a
+    # week, but not across weeks (cumulative_subscriptions would double-count and
+    # eligible_premium_accounts would be multiplied by the number of weeks).
+    # attach_rate is therefore only valid grouped by signup_week, or by
+    # signup_week AND state. Never query it grouped by state alone.
+    # `agg: max` was wrong here: grouped by week it silently returns the largest
+    # state's cumulative over the largest state's base — i.e. SP's attach rate
+    # mislabelled as the national trend.
+    measures:
+      - name: cumulative_subscriptions
+        agg: sum
+        expr: cumulative_subscriptions
+      - name: eligible_premium_accounts
+        agg: sum
+        expr: eligible_premium_accounts
+
+  - name: weekly_channel_economics
+    model: ref('fct_weekly_channel_economics')
+    defaults:
+      agg_time_dimension: signup_week
+    entities:
+      # Surrogate key for the same reason as weekly_attach: the grain is
+      # (channel, week), so `channel` alone is not unique.
+      - name: channel_week_row
+        type: primary
+        expr: channel_week_key
+    dimensions:
+      - name: channel
+        type: categorical
+      - name: signup_week
+        type: time
+        type_params:
+          time_granularity: week
+    measures:
+      - name: channel_new_subscriptions
+        agg: sum
+        expr: new_subscriptions
+      - name: channel_activated_subscriptions
+        agg: sum
+        expr: activated_subscriptions
+      - name: channel_spend_usd
+        agg: sum
+        expr: spend_usd
+      - name: avg_contribution_margin
+        agg: average
+        expr: contribution_margin_per_subscription
+      # Incremental MRR sums across channels and weeks, so unlike attach rate it
+      # is safe to group by either or neither.
+      - name: mrr_added_usd
+        agg: sum
+        expr: mrr_usd
+      - name: avg_cac_payback_months
+        agg: average
+        expr: cac_payback_months
+
+  - name: sales_pitches
+    model: ref('fct_sales_pitches')
+    defaults:
+      agg_time_dimension: pitch_date
+    entities:
+      - name: pitch
+        type: primary
+        expr: pitch_id
+    dimensions:
+      - name: pitch_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: state
+        type: categorical
+    measures:
+      - name: pitches_total
+        agg: count
+        expr: pitch_id
+      - name: pitches_won
+        agg: sum
+        expr: case when won then 1 else 0 end
+
+  - name: at_risk_accounts
+    model: ref('fct_at_risk_accounts')
+    defaults:
+      agg_time_dimension: at_risk_signup_date
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      # Named uniquely per model (see the note above `activation_events`).
+      - name: at_risk_signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
+      # No local `state`/`channel`: `accounts` already owns both under the
+      # same `account` primary entity. Group by `accounts__state` /
+      # `accounts__channel` instead if a by-state or by-channel cut of the
+      # at-risk queue is ever needed — this plan's own queries only ever
+      # group this model by `risk_driver`.
+      - name: risk_driver
+        type: categorical
+    measures:
+      - name: assessable_accounts
+        agg: count
+        expr: account_id
+      - name: at_risk_accounts_count
+        agg: sum
+        expr: case when is_at_risk then 1 else 0 end
