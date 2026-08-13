@@ -18,6 +18,22 @@
 - Out of scope: 12-month churn, NRR, LTV, LTV:CAC, Rule of 40, Magic Number, Quick Ratio, orchestration tooling, CI/CD, multi-user auth, Sigma implementation.
 - Spec reference: `docs/superpowers/specs/2026-08-12-pawtrail-launch-analytics-design.md`
 
+## Skills for Implementers
+
+These encode failure classes actually caught across this plan's two review
+passes (`4bd1336`, `f2c9f18`). Each task below that touches one of these areas
+has an inline `**Skill:**` pointer, but the trigger is the *activity*, not the
+task number — invoke on sight even outside the pointed-to tasks.
+
+| Skill | Scope | Invoke when |
+|---|---|---|
+| `synthetic-data-calibration` | user | writing/tuning any generator (Tasks 2–6) |
+| `statistical-test-assertions` | user | writing a `pytest` assertion on generated data (Tasks 2–6) |
+| `dbt-silent-failure-review` | project | writing/reviewing any dbt model with a join (Tasks 7–13b) |
+| `cohort-metric-definition` | user | defining any rate/ratio over a time-windowed event (Tasks 8, 12, 15) |
+| `metricflow-semantic-layer` | project | editing `_semantic_models.yml`/`_metrics.yml` or running `mf` (Tasks 14–15) |
+| `plan-consistency-sweep` | project | after editing this plan or the spec document itself |
+
 ---
 
 ## Task 1: Project scaffolding & environment setup
@@ -183,6 +199,8 @@ git commit -m "Scaffold Python and dbt project setup"
 ---
 
 ## Task 2: Extract Olist reference distributions
+
+**Skill:** synthetic-data-calibration
 
 **Files:**
 - Create: `data/olist_reference/README.md`
@@ -469,6 +487,8 @@ git commit -m "Extract real Olist delivery-duration and state reference distribu
 
 ## Task 3: Generate synthetic subscription accounts
 
+**Skill:** synthetic-data-calibration, statistical-test-assertions
+
 **Files:**
 - Create: `generator/generate_subscriptions.py`
 - Test: `generator/tests/test_generate_subscriptions.py`
@@ -720,6 +740,8 @@ git commit -m "Generate synthetic PawTrail subscription accounts with S-curve ad
 
 ## Task 4: Generate digital engagement & kit delivery events with an injected risk segment
 
+**Skill:** synthetic-data-calibration, statistical-test-assertions
+
 **Files:**
 - Create: `generator/generate_activity.py`
 - Test: `generator/tests/test_generate_activity.py`
@@ -968,6 +990,8 @@ git commit -m "Generate synthetic kit-delivery and digital-engagement events"
 
 ## Task 5: Generate synthetic business data (pricing, premium base, marketing spend, sales pitches)
 
+**Skill:** synthetic-data-calibration, statistical-test-assertions
+
 **Files:**
 - Create: `generator/generate_business_data.py`
 - Test: `generator/tests/test_generate_business_data.py`
@@ -1195,6 +1219,8 @@ git commit -m "Generate synthetic pricing, premium base, marketing spend, and sa
 
 ## Task 6: Orchestrate generators into dbt seeds
 
+**Skill:** synthetic-data-calibration
+
 **Files:**
 - Create: `generator/build_seeds.py`
 - Test: `generator/tests/test_build_seeds.py`
@@ -1385,6 +1411,8 @@ git commit -m "Orchestrate generators into dbt seed files"
 
 ## Task 7: Load seeds and build core staging models (test-first)
 
+**Skill:** dbt-silent-failure-review
+
 **Files:**
 - Create: `pawtrail_dbt/tests/assert_task_count_matches_generator.sql`
 - Create: `pawtrail_dbt/models/staging/_staging__models.yml`
@@ -1537,6 +1565,8 @@ git commit -m "Add core staging models with test-first schema tests"
 ---
 
 ## Task 8: Intermediate activation funnel model (test-first)
+
+**Skill:** dbt-silent-failure-review, cohort-metric-definition
 
 **Files:**
 - Create: `pawtrail_dbt/tests/assert_digital_activation_requires_login_date.sql`
@@ -1815,6 +1845,8 @@ git commit -m "Add activation funnel with cohort maturity and SLA-based North St
 
 ## Task 9: Marts — dim_accounts, fct_subscriptions (test-first)
 
+**Skill:** dbt-silent-failure-review
+
 **Files:**
 - Create: `pawtrail_dbt/models/marts/_marts__core.yml`
 - Create: `pawtrail_dbt/models/marts/dim_accounts.sql`
@@ -1960,6 +1992,8 @@ git commit -m "Add dim_accounts and fct_subscriptions marts"
 ---
 
 ## Task 10: Marts — fct_activation_events, fct_kit_deliveries (test-first)
+
+**Skill:** dbt-silent-failure-review
 
 **Files:**
 - Modify: `pawtrail_dbt/models/marts/_marts__core.yml` (append new model tests)
@@ -2138,6 +2172,8 @@ git commit -m "Add fct_activation_events and fct_kit_deliveries marts"
 ---
 
 ## Task 11: Business-data staging and marts (test-first)
+
+**Skill:** dbt-silent-failure-review
 
 **Files:**
 - Create: `pawtrail_dbt/models/staging/_staging__business.yml`
@@ -2383,6 +2419,8 @@ git commit -m "Add business-data staging and marts (pricing, premium base, spend
 
 ## Task 12: Mart — fct_weekly_attach (test-first)
 
+**Skill:** dbt-silent-failure-review, cohort-metric-definition
+
 **Files:**
 - Modify: `pawtrail_dbt/models/marts/_marts__business.yml` (append new model tests)
 - Create: `pawtrail_dbt/models/marts/fct_weekly_attach.sql`
@@ -2559,6 +2597,8 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 ## Task 13: Mart — fct_weekly_channel_economics (test-first)
 
+**Skill:** dbt-silent-failure-review
+
 **Files:**
 - Modify: `pawtrail_dbt/models/marts/_marts__business.yml` (append new model tests)
 - Create: `pawtrail_dbt/models/marts/fct_weekly_channel_economics.sql`
@@ -2726,6 +2766,8 @@ git commit -m "Add fct_weekly_channel_economics mart for CAC and unit-economics 
 
 ## Task 13b: Mart — fct_at_risk_accounts (test-first)
 
+**Skill:** dbt-silent-failure-review
+
 Spec §6 defines an "Early risk signals" category and the source context calls
 the at-risk list "the practical Customer Success work queue during launch" —
 it is the one artefact in the catalogue that maps directly onto the target
@@ -2873,6 +2915,8 @@ git commit -m "Add at-risk account queue tagged by failure driver"
 ---
 
 ## Task 14: Semantic layer — semantic models
+
+**Skill:** metricflow-semantic-layer
 
 **Files:**
 - Create: `pawtrail_dbt/models/marts/_semantic_models.yml`
@@ -3227,6 +3271,8 @@ git commit -m "Add MetricFlow semantic models over the marts layer"
 ---
 
 ## Task 15: Semantic layer — metrics definitions and acceptance verification
+
+**Skill:** metricflow-semantic-layer, cohort-metric-definition
 
 **Files:**
 - Create: `pawtrail_dbt/models/marts/_metrics.yml`
