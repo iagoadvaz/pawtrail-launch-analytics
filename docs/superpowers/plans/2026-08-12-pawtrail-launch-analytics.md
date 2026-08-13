@@ -1759,12 +1759,36 @@ Create `pawtrail_dbt/models/marts/_marts__core.yml`:
 version: 2
 
 models:
+  # Categorical marts columns carry accepted_values as well as not_null, per
+  # spec §5. The enum lists are duplicated from the staging tests deliberately:
+  # staging proves the generator emitted clean values, the mart proves the
+  # transformation preserved them. A mart-layer bug that mangles a category
+  # cannot be caught by a staging test.
+  #
+  # `state` is deliberately NOT given accepted_values here. State codes come from
+  # the Olist-derived distribution truncated to the top N (Task 2), so a literal
+  # list would hard-code `n_states` into a test and fail spuriously whenever that
+  # config changes. It gets a relationships test against fct_premium_base instead,
+  # added in Task 11 once that model exists.
   - name: dim_accounts
     columns:
       - name: account_id
         tests:
           - unique
           - not_null
+      - name: state
+        tests:
+          - not_null
+      - name: pet_tier
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['small', 'medium', 'large']
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['self_serve', 'sales_assisted']
 
   - name: fct_subscriptions
     columns:
@@ -1772,6 +1796,9 @@ models:
         tests:
           - unique
           - not_null
+          - relationships:
+              to: ref('dim_accounts')
+              field: account_id
       - name: pawtrail_signup_date
         tests:
           - not_null
@@ -1861,18 +1888,36 @@ where k.kit_delivered_date is not null
 Add to `pawtrail_dbt/models/marts/_marts__core.yml` (append under the existing `models:` list):
 
 ```yaml
+  # `unique` + `not_null` on account_id already rules out fan-out within each
+  # fact. The relationships test covers the other direction: a fact row whose
+  # account has no matching dimension row. That orphan would silently vanish from
+  # every segmented metric in Task 15, because each one joins through
+  # dim_accounts — the numerator would drop the row while an unsegmented total
+  # still counted it, so the same metric would disagree with itself depending on
+  # whether it was grouped.
   - name: fct_activation_events
     columns:
       - name: account_id
         tests:
           - unique
           - not_null
+          - relationships:
+              to: ref('dim_accounts')
+              field: account_id
 
   - name: fct_kit_deliveries
     columns:
       - name: account_id
         tests:
           - unique
+          - not_null
+          - relationships:
+              to: ref('dim_accounts')
+              field: account_id
+      # `state` gets its relationships test in Task 11, once fct_premium_base
+      # exists to point at.
+      - name: state
+        tests:
           - not_null
 ```
 
@@ -1955,6 +2000,7 @@ git commit -m "Add fct_activation_events and fct_kit_deliveries marts"
 - Create: `pawtrail_dbt/models/staging/stg_marketing_spend.sql`
 - Create: `pawtrail_dbt/models/staging/stg_sales_pitches.sql`
 - Create: `pawtrail_dbt/models/marts/_marts__business.yml`
+- Modify: `pawtrail_dbt/models/marts/_marts__core.yml` (add the `state` relationships tests deferred from Tasks 9 and 10)
 - Create: `pawtrail_dbt/models/marts/dim_pricing.sql`
 - Create: `pawtrail_dbt/models/marts/fct_premium_base.sql`
 - Create: `pawtrail_dbt/models/marts/fct_marketing_spend.sql`
@@ -2019,7 +2065,12 @@ models:
         tests:
           - unique
           - not_null
+          - accepted_values:
+              values: ['small', 'medium', 'large']
 
+  # fct_premium_base is the state reference for the whole project: it is the
+  # only model with one guaranteed-unique row per state, so every other model's
+  # state column is tested against it.
   - name: fct_premium_base
     columns:
       - name: state
@@ -2032,6 +2083,8 @@ models:
       - name: channel
         tests:
           - not_null
+          - accepted_values:
+              values: ['self_serve', 'sales_assisted']
 
   - name: fct_sales_pitches
     columns:
@@ -2039,7 +2092,41 @@ models:
         tests:
           - unique
           - not_null
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              to: ref('fct_premium_base')
+              field: state
 ```
+
+Then append the deferred state tests to the **core** marts file,
+`pawtrail_dbt/models/marts/_marts__core.yml`, adding a `relationships` entry to
+the `state` column already declared on each model (Tasks 9 and 10):
+
+```yaml
+      # on dim_accounts.state and on fct_kit_deliveries.state
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              to: ref('fct_premium_base')
+              field: state
+```
+
+These two tests belong to models built back in Tasks 9 and 10, but they are
+added *here* rather than there: a `relationships` test executes a join against
+its target, so declaring it in Task 9 would have made Task 9's own
+`dbt build --select dim_accounts` fail on a `fct_premium_base` relation that did
+not exist yet. dbt also rejects the same model being declared in two schema
+files, so the tests cannot simply live in `_marts__business.yml`. Appending to
+the core file at the point the target becomes available is what keeps every
+task's build green in task order.
+
+The check itself is the one that matters most for attach rate: an account in a
+state with no row in the addressable base divides that state's attach rate by
+nothing. Task 12 joins these two models directly, so an unmatched state silently
+produces a null or infinite rate rather than an error.
 
 - [ ] **Step 3: Run `dbt build` to verify it fails**
 
@@ -2122,13 +2209,22 @@ select * from {{ ref('stg_sales_pitches') }}
 
 - [ ] **Step 6: Run `dbt build` to verify it passes**
 
+`dim_accounts` and `fct_kit_deliveries` are included in the selection even though
+they were built in Tasks 9 and 10. They are already up to date, but selecting
+them is what makes dbt execute the `state` relationships tests appended in
+Step 2 — without them in the selection those two tests are declared and never
+run until Task 20.
+
 ```bash
 cd pawtrail_dbt
-dbt build --profiles-dir . --select stg_pricing stg_premium_base stg_marketing_spend stg_sales_pitches dim_pricing fct_premium_base fct_marketing_spend fct_sales_pitches
+dbt build --profiles-dir . --select stg_pricing stg_premium_base stg_marketing_spend stg_sales_pitches dim_pricing fct_premium_base fct_marketing_spend fct_sales_pitches dim_accounts fct_kit_deliveries
 cd ..
 ```
 
-Expected: all 8 models built, all tests `PASS`.
+Expected: all 8 business models built (plus `dim_accounts` and
+`fct_kit_deliveries` rebuilt unchanged), all tests `PASS` — including the two
+new `relationships_dim_accounts_state__state__ref_fct_premium_base_` and
+`relationships_fct_kit_deliveries_state__state__ref_fct_premium_base_` tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2199,9 +2295,16 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
         tests:
           - unique
           - not_null
+      # The state x week spine is densified (see Step 4), so a state appearing
+      # here that is absent from the addressable base means the spine invented a
+      # row — which the monotonicity test above cannot see, because an invented
+      # state is internally consistent across its own weeks.
       - name: state
         tests:
           - not_null
+          - relationships:
+              to: ref('fct_premium_base')
+              field: state
       - name: attach_rate
         tests:
           - not_null
@@ -2332,6 +2435,8 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
       - name: channel
         tests:
           - not_null
+          - accepted_values:
+              values: ['self_serve', 'sales_assisted']
       - name: new_subscriptions
         tests:
           - not_null
@@ -2512,6 +2617,25 @@ models:
         tests:
           - unique
           - not_null
+          - relationships:
+              to: ref('dim_accounts')
+              field: account_id
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              to: ref('fct_premium_base')
+              field: state
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['self_serve', 'sales_assisted']
+      - name: pet_tier
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['small', 'medium', 'large']
       - name: risk_driver
         tests:
           - not_null
