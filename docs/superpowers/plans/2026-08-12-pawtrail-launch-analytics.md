@@ -12,7 +12,7 @@
 
 - Entire repository (code, comments, commit messages, docs) must be written in English — no exceptions.
 - Product, company, and all data are entirely fictional (PawTrail); the repository must never claim any real company affiliation.
-- Only the Olist Brazilian E-Commerce dataset's *statistical distributions* (delivery delay, state share) may be reused — never its actual customer/order identities.
+- Only the Olist Brazilian E-Commerce dataset's *statistical distributions* (purchase-to-delivery duration, state share) may be reused — never its actual customer/order identities.
 - Warehouse engine is DuckDB only, run locally — no cloud account required to reproduce the project.
 - dbt tests/assertions for a model are written before that model's SQL ("test-first" — see spec §8).
 - Out of scope: 12-month churn, NRR, LTV, LTV:CAC, Rule of 40, Magic Number, Quick Ratio, orchestration tooling, CI/CD, multi-user auth, Sigma implementation.
@@ -122,6 +122,13 @@ vars:
   # it would just report a wrong percentage. Task 7 adds a singular test that
   # fails if any account completed more tasks than this allows.
   first_cycle_task_count: 8
+  # The launch attach-rate target the dashboard and memo judge performance
+  # against (spec §6, "Attach rate ... vs. launch target"). 15% sits inside the
+  # 10-30% band the spec's own reference on add-on attach rates cites as typical,
+  # so the comparison reads as a plausible goal rather than a number invented to
+  # flatter the result. It lives here, not in a Tableau constant, so the target
+  # on the chart and the target quoted in NARRATIVE.md cannot disagree.
+  attach_rate_launch_target: 0.15
 
 models:
   pawtrail:
@@ -455,7 +462,7 @@ Expected: `data/olist_reference/reference_delivery_durations.csv` and `reference
 
 ```bash
 git add data/olist_reference/README.md data/olist_reference/fetch_olist_reference_distributions.py data/olist_reference/tests/test_fetch_olist_reference_distributions.py data/olist_reference/reference_delivery_durations.csv data/olist_reference/reference_state_distribution.csv
-git commit -m "Extract real Olist delivery-delay and state reference distributions"
+git commit -m "Extract real Olist delivery-duration and state reference distributions"
 ```
 
 ---
@@ -1959,6 +1966,7 @@ git commit -m "Add dim_accounts and fct_subscriptions marts"
 - Create: `pawtrail_dbt/models/marts/fct_activation_events.sql`
 - Create: `pawtrail_dbt/models/marts/fct_kit_deliveries.sql`
 - Create: `pawtrail_dbt/tests/assert_kit_delivered_not_before_signup.sql`
+- Create: `pawtrail_dbt/tests/assert_no_negative_intervals.sql`
 
 **Interfaces:**
 - Consumes: `int_activation_funnel` (Task 8), `stg_kit_deliveries` (Task 7), `dim_accounts` and `fct_subscriptions` (Task 9).
@@ -1978,6 +1986,39 @@ left join {{ ref('fct_subscriptions') }} s on k.account_id = s.account_id
 where k.kit_delivered_date is not null
   and k.kit_delivered_date < s.pawtrail_signup_date
 ```
+
+Create `pawtrail_dbt/tests/assert_no_negative_intervals.sql`:
+
+```sql
+-- Spec §8 requires that no time interval in the marts is negative. Every
+-- duration below feeds either a time-to-milestone metric or a maturity flag, so
+-- a negative value would not surface as an error — it would quietly drag an
+-- average down or mark an account mature before its window had opened.
+-- Nulls are legitimate (never logged in, kit never arrived) and are not failures.
+select 'fct_activation_events' as model, account_id, 'days_to_first_login' as col
+from {{ ref('fct_activation_events') }} where days_to_first_login < 0
+union all
+select 'fct_activation_events', account_id, 'days_to_kit_delivery'
+from {{ ref('fct_activation_events') }} where days_to_kit_delivery < 0
+union all
+select 'fct_activation_events', account_id, 'days_observed'
+from {{ ref('fct_activation_events') }} where days_observed < 0
+union all
+select 'fct_kit_deliveries', account_id, 'delivery_duration_days'
+from {{ ref('fct_kit_deliveries') }} where delivery_duration_days < 0
+union all
+select 'fct_kit_deliveries', account_id, 'days_late'
+from {{ ref('fct_kit_deliveries') }} where days_late < 0
+union all
+select 'fct_subscriptions', account_id, 'conversion_lag_days'
+from {{ ref('fct_subscriptions') }} where conversion_lag_days < 0
+```
+
+The semantic layer's rate metrics need no equivalent bounds test: each ratio's
+numerator `AND`s the same maturity flag its denominator counts, so the numerator
+is a subset of the denominator by construction and the rate cannot exceed 1. The
+one rate whose numerator is not structurally bounded is `task_completion_rate`,
+and its guard is `assert_task_count_matches_generator` in Task 7.
 
 - [ ] **Step 2: Append the schema tests before the models exist**
 
@@ -3192,7 +3233,7 @@ git commit -m "Add MetricFlow semantic models over the marts layer"
 
 **Interfaces:**
 - Consumes: every measure defined in Task 14's semantic models.
-- Produces: 29 named metrics queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
+- Produces: every metric declared in `_metrics.yml`, each queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
 
 - [ ] **Step 1: Define the metrics**
 
@@ -3218,6 +3259,18 @@ metrics:
     type_params:
       numerator: cumulative_subscriptions
       denominator: eligible_premium_accounts
+
+  # Attach rate against the launch target (spec §6). Expressed as a ratio to
+  # target so 1.0 means "on plan" and the dashboard needs no separate reference
+  # line that could drift from the number in the memo.
+  - name: attach_rate_vs_target
+    type: derived
+    label: "Attach Rate vs. Launch Target"
+    type_params:
+      expr: rate / {{ var('attach_rate_launch_target') }}
+      metrics:
+        - name: attach_rate
+          alias: rate
 
   - name: task_completion_rate
     type: ratio
@@ -3545,17 +3598,18 @@ git commit -m "Define launch metrics in the semantic layer and export control qu
 
 **Files:**
 - Create: `dashboard/README.md`
+- Create: `dashboard/pawtrail_launch.twbx` (the saved Tableau workbook; spec §7 lists the workbook itself as a deliverable alongside the published link, so the dashboard is reproducible if Tableau Public is ever unavailable)
 
 **Interfaces:**
-- Consumes: the six `control_*.csv` files exported in Task 15, Step 4.
-- Produces: a published Tableau Public workbook URL, recorded in `dashboard/README.md`, consumed by Task 17 (README) and Task 19 (NARRATIVE.md).
+- Consumes: the `control_*.csv` files exported in Task 15, Step 4.
+- Produces: a published Tableau Public workbook URL recorded in `dashboard/README.md`, plus the saved `.twbx` workbook committed alongside it — both consumed by Task 17 (README) and Task 19 (NARRATIVE.md).
 
 - [ ] **Step 1: Build the workbook in Tableau Public Desktop**
 
-Connect Tableau Public to the eight CSV files in `dashboard/`. Build these views, matching spec §6's dashboard structure:
+Connect Tableau Public to the `control_*.csv` files in `dashboard/`. Build these views, matching spec §6's dashboard structure:
 
 1. **Launch pulse** — line chart of `control_weekly_new_subscriptions.csv` (weekly new subscriptions) and `control_attach_rate.csv` (cumulative subscriptions and national attach rate over time), with `control_attach_rate_by_state.csv` as the by-region breakdown.
-2. **Activation** — bar/line chart of `control_activation_rates.csv` showing `digital_activation_rate_7d`, `kit_sla_rate`, and `activation_rate_30d` over time. Plot `mature_cohort_size_30d` as a secondary axis or tooltip so a reader can see how many accounts each rate is computed on — the most recent weeks are deliberately excluded from the 30-day rate until their window closes, and a chart that hides that invites the reader to over-read a thin cohort.
+2. **Activation** — bar/line chart of `control_activation_rates.csv` showing `digital_activation_rate_7d`, `kit_sla_rate`, and the `activation_rate_7d` / `activation_rate_14d` / `activation_rate_30d` progression over time. Plot `mature_cohort_size_30d` as a secondary axis or tooltip so a reader can see how many accounts each rate is computed on — the most recent weeks are deliberately excluded from the 30-day rate until their window closes, and a chart that hides that invites the reader to over-read a thin cohort.
 3. **Kit operations** — bar chart of `control_kit_sla_by_state.csv`, sorted ascending by `kit_on_time_delivery_rate`, so the injected problem state is visually the worst performer.
 4. **Acquisition efficiency** — chart of `control_cac_by_channel.csv` (CAC and cost-per-activated-account by channel over time) plus `control_win_rate.csv` broken out by state.
 5. **Customer Success queue** — bar chart of `control_at_risk_by_driver.csv` showing at-risk account counts split by `risk_driver` (`digital_failure`, `physical_failure`, `both_legs_failed`, `onboarding_gap`). This is the view that turns the analysis into an action list, and it is what makes the launch dashboard answer "who do we call on Monday" rather than only "how are we doing".
@@ -3648,7 +3702,7 @@ anywhere in this repository.
 
 The dataset is hybrid:
 
-- **Real**: delivery-delay and state-distribution *patterns*, resampled
+- **Real**: purchase-to-delivery duration and state-distribution *patterns*, resampled
   from the public [Olist Brazilian E-Commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
   (Kaggle) — see `data/olist_reference/`. Only statistical shape is reused,
   never Olist's actual customer/order identities.
@@ -3701,7 +3755,7 @@ mf query --metrics activation_rate_30d --group-by metric_time__week
 
 ## Repository structure
 
-- `data/olist_reference/` — real-data extraction (delivery delay, state share)
+- `data/olist_reference/` — real-data extraction (purchase-to-delivery duration, state share)
 - `generator/` — synthetic PawTrail data generators (pytest-covered)
 - `pawtrail_dbt/` — dbt project: staging → intermediate → marts, semantic layer
 - `dashboard/` — Tableau Public workbook link and metric exports
@@ -3770,6 +3824,8 @@ defensible answer in an interview than a generic "out of scope":
 | Not implemented | Blocked on |
 |---|---|
 | App sessions in first 2–4 weeks, repeat engagement rate, feature adoption | Session-level event stream; the generator emits a first-login date and a task count, not sessions |
+| % accounts with at least 1 health/activity log in the first cycle | A health/activity log event. This is a different app surface from care-plan tasks, so `task_engagement_rate` is **not** a stand-in for it and must not be labelled as one |
+| Attach rate by channel, by pet tier, and by Premium tenure band | An eligible Premium base attributed to those dimensions. `fct_premium_base` is per state only, and channel does not exist for accounts that never attached — see the segmentation note in spec §6 |
 | Time to first completed care-plan task | A first-task timestamp; `care_tasks_completed_first_cycle` is a count with no date |
 | % pet profiles with complete onboarding | An onboarding-completeness field on the account |
 | Cancellation-before-first-cycle rate | Cancellation events; the launch window carries no churn signal by design |
@@ -3803,7 +3859,7 @@ git commit -m "Add human-readable metrics dictionary"
 
 - [ ] **Step 1: Pull the actual numbers**
 
-Open the six `dashboard/control_*.csv` files generated in Task 15, Step 4.
+Open the `dashboard/control_*.csv` files generated in Task 15, Step 4.
 Note: the overall `activation_rate_30d` trend, the on-time delivery rate for
 the problem state vs. the rest, the attach-rate trajectory, and the
 CAC/cost-per-activated-account by channel.
@@ -3818,8 +3874,21 @@ days, tied to that root cause (e.g., "escalate the carrier issue in
 [state] before scaling marketing spend into that region"), and sized against
 the at-risk queue from `control_at_risk_by_driver.csv` — how many accounts
 Customer Success would actually be calling, split by driver; (4) an explicit
-one-paragraph note on why churn/NRR/LTV are not part of this memo, citing
-the same reasoning as spec §2 and §6.
+one-paragraph note on what is deliberately **not** measured here and why.
+
+That last paragraph must name every exclusion the spec commits to, not just
+the obvious ones — spec §2 and §6 list **12-month churn, NRR, LTV, LTV:CAC,
+Rule of 40, Magic Number, and Quick Ratio**, and the rationale differs between
+them: the first four need retention history the launch window cannot have, the
+last three are mature-stage operating metrics that need quarters of expansion
+data. Naming all seven with the right reason for each is the point of the
+paragraph; naming only churn reads as not having considered the others.
+
+**Length: one page.** Roughly 500–600 words, and it must fit on a single
+printed page. The spec calls this a one-page memo, and the constraint is
+load-bearing rather than cosmetic — the exercise being demonstrated is deciding
+which signals earn space, so a memo that runs long has failed the exercise even
+if every sentence in it is correct.
 
 Add a short **"How these numbers are counted"** paragraph covering the two
 methodology choices a reader would otherwise have to reverse-engineer, both of

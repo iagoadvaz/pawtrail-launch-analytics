@@ -156,7 +156,10 @@ cannot be computed.
 **Early engagement** (leading signal, not retention)
 - % of first-cycle tasks/content marked complete
 - [deferred] Average app sessions in first 2–4 weeks
-- % accounts with at least 1 health/activity log in the first cycle
+- [deferred] % accounts with at least 1 health/activity log in the first cycle
+  — health/activity logging is a distinct app surface from care-plan tasks
+  (§2), and the generator emits only task completions, so the implemented
+  task-engagement rate is not a substitute for it
 - [deferred] Repeat engagement rate within 30 days (2nd, 3rd session — habit-forming
   signal)
 - [deferred] Feature adoption (which app features are used first)
