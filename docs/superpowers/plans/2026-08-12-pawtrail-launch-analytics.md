@@ -1749,7 +1749,8 @@ git commit -m "Add activation funnel with cohort maturity and SLA-based North St
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` from Task 7.
-- Produces: `dim_accounts(account_id, state, pet_tier, channel)`, referenced by Task 10 (join) and Task 14's `accounts` semantic model; `fct_subscriptions(account_id, pawtrail_signup_date, signup_week)`, referenced by Task 10's singular test and Task 14's `subscriptions` semantic model.
+- Produces: `dim_accounts(account_id, state, pet_tier, channel, premium_tenure_days, premium_tenure_band)`, referenced by Task 10 (join) and Task 14's `accounts` semantic model; `fct_subscriptions(account_id, pawtrail_signup_date, signup_week)`, referenced by Task 10's singular test and Task 14's `subscriptions` semantic model.
+- **Premium tenure is carried through to the mart**, not dropped at the intermediate layer. Spec §6 lists "Premium tenure before attach" as a segmentation dimension applied across all metrics, and Task 3 already generates the column with a deliberate negative correlation against signup day so the segment carries real signal. Leaving it in `int_activation_funnel` only would make that generated signal unqueryable from the semantic layer.
 
 - [ ] **Step 1: Write the schema tests before the models exist**
 
@@ -1789,6 +1790,17 @@ models:
           - not_null
           - accepted_values:
               values: ['self_serve', 'sales_assisted']
+      - name: premium_tenure_days
+        tests:
+          - not_null
+      # The band, not the raw day count, is what the semantic layer exposes as a
+      # dimension. Grouping a metric by premium_tenure_days would return one row
+      # per distinct day (~870 of them), which is not a segmentation.
+      - name: premium_tenure_band
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['0-180', '181-365', '366-730', '731+']
 
   - name: fct_subscriptions
     columns:
@@ -1819,11 +1831,23 @@ Expected: compilation error — models not found.
 Create `pawtrail_dbt/models/marts/dim_accounts.sql`:
 
 ```sql
+-- Band boundaries are the standard subscription-tenure reads (under 6 months,
+-- 6-12 months, 1-2 years, 2 years+) rather than equal-width buckets. Task 3
+-- generates tenure decaying from ~900 days at launch to ~420 by day 120 with
+-- 150-day noise, clipped to [30, 900], so all four bands are populated and the
+-- adoption-order signal is visible across them.
 select
     account_id,
     state,
     pet_tier,
-    channel
+    channel,
+    premium_tenure_days,
+    case
+        when premium_tenure_days <= 180 then '0-180'
+        when premium_tenure_days <= 365 then '181-365'
+        when premium_tenure_days <= 730 then '366-730'
+        else '731+'
+    end as premium_tenure_band
 from {{ ref('stg_subscriptions') }}
 ```
 
@@ -2743,6 +2767,12 @@ semantic_models:
         type: categorical
       - name: channel
         type: categorical
+      # Completes spec §6's segmentation set (state, pet tier, channel, Premium
+      # tenure before attach). The banded column is exposed rather than the raw
+      # day count so `--group-by accounts__premium_tenure_band` returns four
+      # comparable cohorts instead of one row per distinct tenure value.
+      - name: premium_tenure_band
+        type: categorical
 
   - name: subscriptions
     model: ref('fct_subscriptions')
@@ -3132,10 +3162,11 @@ export DBT_PROFILES_DIR="$PWD"
 mf query --metrics activation_rate_30d --group-by metric_time__week
 mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state --order kit_on_time_delivery_rate
 mf query --metrics activation_rate_30d --group-by accounts__state --order activation_rate_30d
+mf query --metrics mature_cohort_size_30d --group-by accounts__premium_tenure_band
 cd ..
 ```
 
-Expected, and all three must hold:
+Expected, and all four must hold:
 
 1. `kit_on_time_delivery_rate` sorted ascending puts the configured
    `PROBLEM_STATE` (default `"OH"`) **first**, at roughly 55-60% against a
@@ -3150,6 +3181,14 @@ Expected, and all three must hold:
    looser "delivered within 30 days" rule.
 3. Every region in both queries has a denominator large enough to trust; spot
    check with `mf query --metrics mature_cohort_size_30d --group-by accounts__state`.
+4. The tenure query returns **all four bands**, none of them empty. This checks
+   that the segmentation is non-degenerate, and it is the only tenure assertion
+   the generator actually guarantees: Task 3 makes tenure decay across the launch
+   window, so longer-tenured accounts signed up earlier and the `731+` band
+   should hold the largest mature cohort. Do **not** assert that activation
+   differs by tenure — activation is driven by kit SLA and login behaviour, which
+   Task 4 generates independently of tenure, so a flat activation profile across
+   bands is the correct result rather than a bug.
 
 This is the concrete proof, called for in spec §8, that the semantic layer
 surfaces a real root-cause signal rather than just displaying numbers.
