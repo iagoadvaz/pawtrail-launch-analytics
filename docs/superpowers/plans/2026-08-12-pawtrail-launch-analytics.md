@@ -94,6 +94,15 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# Activation thresholds live here rather than being repeated as literals inside
+# model SQL, so the SLA the funnel enforces, the metric definitions, and
+# METRICS.md can never drift apart.
+vars:
+  kit_sla_days: 10
+  digital_activation_window_days: 7
+  at_risk_no_login_days: 14
+  combined_activation_window_days: 30
+
 models:
   pawtrail:
     staging:
@@ -154,7 +163,8 @@ git commit -m "Scaffold Python and dbt project setup"
 - Test: `data/olist_reference/tests/test_fetch_olist_reference_distributions.py`
 
 **Interfaces:**
-- Produces: `compute_delivery_delay_distribution(orders: pd.DataFrame) -> pd.Series` and `compute_state_distribution(customers: pd.DataFrame) -> pd.Series`, and (when run as a script) the committed files `data/olist_reference/reference_delivery_delays.csv` and `data/olist_reference/reference_state_distribution.csv`, consumed by Task 5's `build_seeds.py`.
+- Produces: `compute_delivery_duration_distribution(orders: pd.DataFrame) -> pd.Series`, `compute_state_distribution(customers: pd.DataFrame) -> pd.Series`, and `map_to_us_market(state_distribution: pd.Series, n_states: int) -> pd.Series`, and (when run as a script) the committed files `data/olist_reference/reference_delivery_durations.csv` and `data/olist_reference/reference_state_distribution.csv`, consumed by Task 6's `build_seeds.py`.
+- **Why duration, not delay-vs-estimate:** Olist's `order_estimated_delivery_date` is heavily padded — actual deliveries land ~10-12 days *early* on average. Using `actual - estimated` as if it were delay against a promised fulfilment window produces a distribution centred well below zero, which downstream would collapse onto a floor and make most kits arrive the day the account signed up. The purchase-to-delivery *duration* is the quantity that actually corresponds to "how long did the kit take to arrive".
 
 - [ ] **Step 1: Document how to obtain the real Olist dataset**
 
@@ -167,7 +177,21 @@ This project borrows two *statistical distributions* from the real, public
 [Olist Brazilian E-Commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
 (Kaggle) to make PawTrail's synthetic kit-delivery logistics and geography
 realistic. No Olist customer, order, or product identity is reused — only
-the empirical shape of delivery delays and state distribution.
+the empirical shape of delivery durations and regional concentration.
+
+Two deliberate transformations are applied, both documented in the design
+spec §4:
+
+- **Delivery duration, not delay-vs-estimate.** Olist's estimated delivery
+  dates are heavily padded, so `actual - estimated` is centred around 10-12
+  days *early* and does not describe how long a shipment took. We use
+  purchase-to-delivery duration instead, then rescale it to a subscription-kit
+  fulfilment range (see `TARGET_MEDIAN_FULFILLMENT_DAYS` in the generator).
+- **Regional shape mapped onto a US market.** PawTrail is priced in USD, so
+  Brazilian state codes would be internally inconsistent. We keep Olist's
+  *concentration curve* (one dominant region, a long tail) and relabel the
+  top N regions onto US state codes by rank. The shape is real; the labels
+  are not, and nothing is claimed about the US market itself.
 
 ## To regenerate the reference files
 
@@ -184,7 +208,7 @@ the empirical shape of delivery delays and state distribution.
    python data/olist_reference/fetch_olist_reference_distributions.py
    ```
 
-This writes `reference_delivery_delays.csv` and
+This writes `reference_delivery_durations.csv` and
 `reference_state_distribution.csv` into this directory. Those two small
 files are committed to the repo; the raw Olist download itself is not
 (see `.gitignore`).
@@ -198,31 +222,49 @@ Create `data/olist_reference/tests/test_fetch_olist_reference_distributions.py`:
 import pandas as pd
 
 from data.olist_reference.fetch_olist_reference_distributions import (
-    compute_delivery_delay_distribution,
+    compute_delivery_duration_distribution,
     compute_state_distribution,
+    map_to_us_market,
 )
 
 
-def test_delivery_delay_distribution_computes_actual_minus_estimated():
+def test_delivery_duration_is_purchase_to_delivery_in_days():
     orders = pd.DataFrame(
         {
             "order_id": ["a", "b", "c"],
-            "order_estimated_delivery_date": [
-                "2018-01-10",
-                "2018-01-10",
-                "2018-01-10",
+            "order_purchase_timestamp": [
+                "2018-01-01 10:00:00",
+                "2018-01-01 10:00:00",
+                "2018-01-01 10:00:00",
             ],
             "order_delivered_customer_date": [
-                "2018-01-12",  # 2 days late
-                "2018-01-08",  # 2 days early
-                None,  # not yet delivered, must be dropped
+                "2018-01-08 10:00:00",  # 7 days in transit
+                "2018-01-04 10:00:00",  # 3 days in transit
+                None,  # never delivered, must be dropped
             ],
         }
     )
 
-    result = compute_delivery_delay_distribution(orders)
+    result = compute_delivery_duration_distribution(orders)
 
-    assert list(result) == [2, -2]
+    assert list(result) == [7, 3]
+
+
+def test_delivery_duration_drops_non_positive_durations():
+    """Olist contains a handful of rows where the delivery timestamp precedes
+    the purchase timestamp. They are data errors, not same-day deliveries, and
+    would pull the rescaled fulfilment distribution toward zero."""
+    orders = pd.DataFrame(
+        {
+            "order_id": ["a", "b"],
+            "order_purchase_timestamp": ["2018-01-10 10:00:00", "2018-01-01 10:00:00"],
+            "order_delivered_customer_date": ["2018-01-09 10:00:00", "2018-01-06 10:00:00"],
+        }
+    )
+
+    result = compute_delivery_duration_distribution(orders)
+
+    assert list(result) == [5]
 
 
 def test_state_distribution_sums_to_one():
@@ -234,6 +276,35 @@ def test_state_distribution_sums_to_one():
     assert result["RJ"] == 0.25
     assert result["MG"] == 0.25
     assert abs(result.sum() - 1.0) < 1e-9
+
+
+def test_map_to_us_market_preserves_shape_and_renormalises():
+    source = pd.Series({"SP": 0.5, "RJ": 0.3, "MG": 0.15, "RR": 0.05}, name="share")
+
+    result = map_to_us_market(source, n_states=3)
+
+    # The long tail is dropped and the remainder renormalised to 1.0.
+    assert len(result) == 3
+    assert abs(result.sum() - 1.0) < 1e-9
+    # Labels are US state codes, ranked to match the source concentration order.
+    assert list(result.index) == ["CA", "TX", "FL"]
+    # Relative ordering (the real, borrowed signal) survives the relabelling.
+    assert result["CA"] > result["TX"] > result["FL"]
+
+
+def test_map_to_us_market_keeps_every_state_above_a_usable_sample_size():
+    """The smallest retained region must still be big enough that a per-state
+    rate is not pure noise at the project's account volume (see Task 6's
+    N_ACCOUNTS). Olist's untruncated tail goes down to ~0.05%, which at 3000
+    accounts is one or two rows per state."""
+    source = pd.Series(
+        {f"S{i}": share for i, share in enumerate([0.42, 0.13, 0.12, 0.05, 0.04, 0.001])},
+        name="share",
+    )
+
+    result = map_to_us_market(source, n_states=5)
+
+    assert result.min() * 3000 >= 30
 ```
 
 - [ ] **Step 3: Run the test to verify it fails**
@@ -251,7 +322,7 @@ Create `data/olist_reference/fetch_olist_reference_distributions.py`:
 ```python
 """Derive empirical reference distributions from the real Olist dataset.
 
-These distributions (delivery delay in days, customer state share) are used
+These distributions (delivery duration in days, regional concentration) are used
 downstream only as sampling scaffolds for synthetic PawTrail data. No Olist
 customer, order, or product identity is reused.
 """
@@ -262,26 +333,39 @@ import pandas as pd
 RAW_DIR = Path(__file__).parent / "raw"
 OUTPUT_DIR = Path(__file__).parent
 
+# US state codes ordered by population, used to relabel Olist's regional
+# concentration curve onto a US market. Rank i of the source distribution maps
+# to rank i here, so the *shape* is preserved and only the label changes.
+US_STATES_BY_RANK = [
+    "CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC", "MI", "NJ", "VA",
+    "WA", "AZ", "MA", "TN", "IN", "MO", "MD", "WI",
+]
 
-def compute_delivery_delay_distribution(orders: pd.DataFrame) -> pd.Series:
-    """Return delivery delay in days (actual - estimated) for delivered orders.
 
-    Positive values mean the order arrived late; negative means early.
+def compute_delivery_duration_distribution(orders: pd.DataFrame) -> pd.Series:
+    """Return purchase-to-delivery duration in whole days for delivered orders.
+
+    This is deliberately *not* `actual - estimated`. Olist's estimated delivery
+    dates are padded by roughly 10-12 days, so the estimate delta describes
+    forecast conservatism rather than how long a shipment actually took.
     """
     delivered = orders.dropna(
-        subset=["order_delivered_customer_date", "order_estimated_delivery_date"]
+        subset=["order_delivered_customer_date", "order_purchase_timestamp"]
     ).copy()
     delivered["order_delivered_customer_date"] = pd.to_datetime(
         delivered["order_delivered_customer_date"]
     )
-    delivered["order_estimated_delivery_date"] = pd.to_datetime(
-        delivered["order_estimated_delivery_date"]
+    delivered["order_purchase_timestamp"] = pd.to_datetime(
+        delivered["order_purchase_timestamp"]
     )
-    delay_days = (
+    duration_days = (
         delivered["order_delivered_customer_date"]
-        - delivered["order_estimated_delivery_date"]
+        - delivered["order_purchase_timestamp"]
     ).dt.days
-    return delay_days.rename("delay_days")
+    # A small number of Olist rows have a delivery timestamp before the purchase
+    # timestamp. Those are data errors, not instant deliveries.
+    duration_days = duration_days[duration_days > 0]
+    return duration_days.reset_index(drop=True).rename("duration_days")
 
 
 def compute_state_distribution(customers: pd.DataFrame) -> pd.Series:
@@ -290,14 +374,38 @@ def compute_state_distribution(customers: pd.DataFrame) -> pd.Series:
     return (counts / counts.sum()).rename("share")
 
 
+def map_to_us_market(state_distribution: pd.Series, n_states: int) -> pd.Series:
+    """Relabel the top `n_states` regions onto US state codes, renormalised.
+
+    Two problems are solved at once. First, PawTrail prices in USD, so Brazilian
+    state codes would be internally inconsistent in every chart. Second, Olist's
+    untruncated tail reaches ~0.05% share, which at this project's account volume
+    is one or two accounts per state — enough to let a meaningless 0%-or-100%
+    rate outrank the deliberately injected problem region on any sorted chart.
+
+    Only the concentration curve is borrowed. No claim is made about the real
+    geographic distribution of any US market.
+    """
+    if n_states > len(US_STATES_BY_RANK):
+        raise ValueError(
+            f"n_states={n_states} exceeds the {len(US_STATES_BY_RANK)} available labels"
+        )
+
+    top = state_distribution.sort_values(ascending=False).head(n_states)
+    renormalised = top / top.sum()
+    renormalised.index = US_STATES_BY_RANK[:n_states]
+    renormalised.index.name = "state"
+    return renormalised.rename("share")
+
+
 def main() -> None:
     orders = pd.read_csv(RAW_DIR / "olist_orders_dataset.csv")
     customers = pd.read_csv(RAW_DIR / "olist_customers_dataset.csv")
 
-    delay_days = compute_delivery_delay_distribution(orders)
-    delay_days.to_csv(OUTPUT_DIR / "reference_delivery_delays.csv", index=False)
+    duration_days = compute_delivery_duration_distribution(orders)
+    duration_days.to_csv(OUTPUT_DIR / "reference_delivery_durations.csv", index=False)
 
-    state_share = compute_state_distribution(customers)
+    state_share = map_to_us_market(compute_state_distribution(customers), n_states=12)
     state_share.to_csv(OUTPUT_DIR / "reference_state_distribution.csv")
 
 
@@ -311,7 +419,7 @@ if __name__ == "__main__":
 pytest data/olist_reference/tests/test_fetch_olist_reference_distributions.py -v
 ```
 
-Expected: 2 passed.
+Expected: 5 passed.
 
 - [ ] **Step 6: Download the real dataset and generate the committed reference files**
 
@@ -321,12 +429,12 @@ Follow `data/olist_reference/README.md` (requires a Kaggle account), then:
 python data/olist_reference/fetch_olist_reference_distributions.py
 ```
 
-Expected: `data/olist_reference/reference_delivery_delays.csv` and `reference_state_distribution.csv` are created.
+Expected: `data/olist_reference/reference_delivery_durations.csv` and `reference_state_distribution.csv` are created.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add data/olist_reference/README.md data/olist_reference/fetch_olist_reference_distributions.py data/olist_reference/tests/test_fetch_olist_reference_distributions.py data/olist_reference/reference_delivery_delays.csv data/olist_reference/reference_state_distribution.csv
+git add data/olist_reference/README.md data/olist_reference/fetch_olist_reference_distributions.py data/olist_reference/tests/test_fetch_olist_reference_distributions.py data/olist_reference/reference_delivery_durations.csv data/olist_reference/reference_state_distribution.csv
 git commit -m "Extract real Olist delivery-delay and state reference distributions"
 ```
 
@@ -351,7 +459,7 @@ import pandas as pd
 
 from generator.generate_subscriptions import LAUNCH_DATE, generate_subscriptions
 
-REFERENCE_STATES = pd.Series({"SP": 0.6, "RJ": 0.3, "MG": 0.1})
+REFERENCE_STATES = pd.Series({"CA": 0.6, "TX": 0.3, "FL": 0.1})
 
 
 def test_generates_requested_number_of_accounts():
@@ -406,6 +514,33 @@ def test_adoption_curve_is_not_uniform():
     assert last_week > 0
     # ...and be S-shaped, not a flat ramp.
     assert middle_week > 3 * first_week
+
+
+def test_attach_propensity_varies_by_state():
+    """Subscriber state share must diverge from the eligible-base state share,
+    otherwise attach rate is identical in every state by construction and every
+    'attach rate by segment' chart in the spec is flat noise."""
+    df = generate_subscriptions(
+        n_accounts=4000, launch_days=120, seed=42, state_distribution=REFERENCE_STATES
+    )
+
+    subscriber_share = df["state"].value_counts(normalize=True)
+    # Attach rate by state is proportional to subscriber share / base share.
+    relative_attach = subscriber_share / REFERENCE_STATES
+
+    assert relative_attach.max() / relative_attach.min() > 1.5
+
+
+def test_longer_premium_tenure_adopts_earlier():
+    """Premium tenure must correlate negatively with signup day, so 'attach rate
+    by Premium tenure' and 'conversion lag' carry a real signal rather than
+    reproducing the same flat rate in every bucket."""
+    df = generate_subscriptions(
+        n_accounts=4000, launch_days=120, seed=42, state_distribution=REFERENCE_STATES
+    )
+    days = (pd.to_datetime(df["pawtrail_signup_date"]) - pd.Timestamp(LAUNCH_DATE)).dt.days
+
+    assert days.corr(df["premium_tenure_days"]) < -0.2
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -437,6 +572,19 @@ import pandas as pd
 PET_TIERS = ["small", "medium", "large"]
 CHANNELS = ["self_serve", "sales_assisted"]
 
+# Per-state attach propensity multipliers are spread across this range, so attach
+# rate varies by geography instead of being constant by construction. The 3x
+# spread between the weakest and strongest region is what makes the spec's
+# "attach rate by segment" views carry a discoverable signal.
+STATE_ATTACH_PROPENSITY_RANGE = (0.6, 1.8)
+
+MIN_PREMIUM_TENURE_DAYS = 30
+MAX_PREMIUM_TENURE_DAYS = 900
+# Tenure falls by this many days for each day later in the launch window, giving
+# early adopters materially longer Premium histories.
+TENURE_DECAY_DAYS_PER_DAY = 4.0
+TENURE_NOISE_DAYS = 150.0
+
 # Anchored to a Monday so that date_trunc('week', ...) in dbt lands on exactly
 # the same boundary as the weekly marketing-spend buckets. A mid-week launch
 # date silently breaks the spend join in fct_weekly_channel_economics: DuckDB
@@ -462,6 +610,29 @@ def _sample_signup_days(n_accounts: int, launch_days: int, rng: np.random.Genera
     return np.clip(days, 0, launch_days - 1).astype(int)
 
 
+def _subscriber_state_distribution(
+    state_distribution: pd.Series, rng: np.random.Generator
+) -> pd.Series:
+    """Tilt the eligible-base state shares by a per-state attach propensity.
+
+    Sampling subscriber states straight from the eligible-base distribution makes
+    attach rate identical in every state by construction, which silently empties
+    every 'attach rate by segment' view in the spec. Drawing a propensity
+    multiplier per state means attach rate becomes something the dashboard can
+    actually discover.
+    """
+    # The spread is deterministic (linspace across the range) and only the
+    # assignment of propensity to state is seeded. Drawing each multiplier
+    # independently from a uniform would leave the observed spread to chance —
+    # with a handful of states it lands below 1.5x roughly a third of the time,
+    # which would make the accompanying test flaky rather than meaningful.
+    propensity = rng.permutation(
+        np.linspace(*STATE_ATTACH_PROPENSITY_RANGE, num=len(state_distribution))
+    )
+    tilted = state_distribution.to_numpy() * propensity
+    return pd.Series(tilted / tilted.sum(), index=state_distribution.index)
+
+
 def generate_subscriptions(
     n_accounts: int,
     launch_days: int,
@@ -472,10 +643,22 @@ def generate_subscriptions(
     rng = np.random.default_rng(seed)
 
     signup_days = _sample_signup_days(n_accounts, launch_days, rng)
-    states = rng.choice(state_distribution.index, size=n_accounts, p=state_distribution.values)
+    subscriber_states = _subscriber_state_distribution(state_distribution, rng)
+    states = rng.choice(
+        subscriber_states.index, size=n_accounts, p=subscriber_states.to_numpy()
+    )
     channels = rng.choice(CHANNELS, size=n_accounts, p=[0.7, 0.3])
     pet_tiers = rng.choice(PET_TIERS, size=n_accounts, p=[0.4, 0.4, 0.2])
-    premium_tenure_days = rng.integers(30, 900, size=n_accounts)
+
+    # Long-tenured Premium accounts adopt an add-on earlier than accounts that
+    # only just upgraded, so tenure decays across the launch window rather than
+    # being independent of it. Without this, tenure segments are indistinguishable.
+    tenure_trend = MAX_PREMIUM_TENURE_DAYS - signup_days * TENURE_DECAY_DAYS_PER_DAY
+    premium_tenure_days = np.clip(
+        tenure_trend + rng.normal(0, TENURE_NOISE_DAYS, size=n_accounts),
+        MIN_PREMIUM_TENURE_DAYS,
+        MAX_PREMIUM_TENURE_DAYS,
+    ).astype(int)
 
     signup_dates = [LAUNCH_DATE + dt.timedelta(days=int(d)) for d in signup_days]
 
@@ -497,7 +680,7 @@ def generate_subscriptions(
 pytest generator/tests/test_generate_subscriptions.py -v
 ```
 
-Expected: 4 passed.
+Expected: 6 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -515,8 +698,8 @@ git commit -m "Generate synthetic PawTrail subscription accounts with S-curve ad
 - Test: `generator/tests/test_generate_activity.py`
 
 **Interfaces:**
-- Consumes: the `subscriptions: pd.DataFrame` produced by Task 3 (`account_id, state, pawtrail_signup_date` columns required), and a `delay_days_sample: np.ndarray` shaped like Task 2's `reference_delivery_delays.csv` values.
-- Produces: `generate_kit_deliveries(subscriptions, delay_days_sample, problem_state, problem_delay_penalty_days, seed) -> pd.DataFrame` with columns `account_id, kit_delivered_date, kit_lost, delivery_delay_days`; `generate_digital_engagement(subscriptions, seed) -> pd.DataFrame` with columns `account_id, first_login_date, care_tasks_completed_first_cycle`. Consumed by Task 6's `build_seeds.py`.
+- Consumes: the `subscriptions: pd.DataFrame` produced by Task 3 (`account_id, state, pawtrail_signup_date` columns required), and a `duration_days_sample: np.ndarray` shaped like Task 2's `reference_delivery_durations.csv` values.
+- Produces: `generate_kit_deliveries(subscriptions, duration_days_sample, problem_state, problem_delay_penalty_days, seed) -> pd.DataFrame` with columns `account_id, kit_delivered_date, kit_lost, delivery_duration_days`; `generate_digital_engagement(subscriptions, seed) -> pd.DataFrame` with columns `account_id, first_login_date, care_tasks_completed_first_cycle`. Consumed by Task 6's `build_seeds.py`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -529,6 +712,7 @@ import numpy as np
 import pandas as pd
 
 from generator.generate_activity import (
+    TARGET_MEDIAN_FULFILLMENT_DAYS,
     generate_digital_engagement,
     generate_kit_deliveries,
 )
@@ -539,44 +723,67 @@ def _sample_subscriptions(states):
         {
             "account_id": [f"acct_{i}" for i in range(len(states))],
             "state": states,
-            "pawtrail_signup_date": [dt.date(2026, 1, 1)] * len(states),
+            "pawtrail_signup_date": [dt.date(2026, 1, 5)] * len(states),
         }
     )
 
 
-def test_problem_state_has_higher_average_delay():
-    states = ["SP"] * 500 + ["RJ"] * 500
+# A stand-in for the real Olist duration distribution: right-skewed, all positive.
+DURATION_SAMPLE = np.array([3, 4, 5, 6, 7, 8, 10, 12, 15, 22, 35])
+
+
+def test_problem_state_has_longer_average_delivery_duration():
+    states = ["CA"] * 500 + ["OH"] * 500
     subs = _sample_subscriptions(states)
-    delay_sample = np.zeros(1000)  # isolate the penalty effect from baseline noise
 
     result = generate_kit_deliveries(
-        subs, delay_days_sample=delay_sample, problem_state="RJ",
+        subs, duration_days_sample=DURATION_SAMPLE, problem_state="OH",
         problem_delay_penalty_days=10, seed=1,
     )
 
-    avg_delay_sp = result.loc[subs["state"] == "SP", "delivery_delay_days"].mean()
-    avg_delay_rj = result.loc[subs["state"] == "RJ", "delivery_delay_days"].mean()
+    avg_ca = result.loc[subs["state"] == "CA", "delivery_duration_days"].mean()
+    avg_oh = result.loc[subs["state"] == "OH", "delivery_duration_days"].mean()
 
-    assert avg_delay_rj > avg_delay_sp + 5
+    assert avg_oh > avg_ca + 5
 
 
-def test_kit_delivered_date_never_before_signup():
-    states = ["SP"] * 300
+def test_durations_are_rescaled_to_the_fulfilment_target():
+    """The empirical Olist median (~10-12 days) describes marketplace shipping,
+    not subscription-kit fulfilment. It is rescaled so the SLA threshold in
+    Task 8 sits at a plausible point on the distribution rather than passing
+    or failing essentially everyone."""
+    states = ["CA"] * 2000
     subs = _sample_subscriptions(states)
-    delay_sample = np.array([-30, -10, -3, -1, 0, 1, 3, 5, 90])  # wide, realistic-looking range
 
     result = generate_kit_deliveries(
-        subs, delay_days_sample=delay_sample, problem_state="RJ",
+        subs, duration_days_sample=DURATION_SAMPLE, problem_state="OH",
+        problem_delay_penalty_days=10, seed=4,
+    )
+
+    median_duration = result["delivery_duration_days"].median()
+    assert abs(median_duration - TARGET_MEDIAN_FULFILLMENT_DAYS) <= 2
+
+
+def test_kit_delivered_date_is_always_after_signup():
+    states = ["CA"] * 300
+    subs = _sample_subscriptions(states)
+
+    result = generate_kit_deliveries(
+        subs, duration_days_sample=DURATION_SAMPLE, problem_state="OH",
         problem_delay_penalty_days=10, seed=2,
     )
 
     delivered = result.dropna(subset=["kit_delivered_date"])
     merged = delivered.merge(subs, on="account_id")
-    assert (merged["kit_delivered_date"] >= merged["pawtrail_signup_date"]).all()
+    # Strictly after: a kit cannot be fulfilled and delivered the same day the
+    # account signed up. The old delay-vs-estimate model piled a large share of
+    # accounts onto exactly day zero.
+    assert (merged["kit_delivered_date"] > merged["pawtrail_signup_date"]).all()
+    assert (result["delivery_duration_days"] >= 1).all()
 
 
 def test_digital_engagement_zero_tasks_when_no_login():
-    states = ["SP"] * 1000
+    states = ["CA"] * 1000
     subs = _sample_subscriptions(states)
 
     result = generate_digital_engagement(subs, seed=3)
@@ -601,9 +808,11 @@ Create `generator/generate_activity.py`:
 ```python
 """Generate synthetic kit-delivery and digital-engagement events.
 
-Delivery delays are sampled from the real Olist empirical delay distribution
-to keep the logistics noise realistic. One state is deliberately made worse
-than the rest so the launch dashboard has a genuine root cause to surface.
+Delivery durations are resampled from the real Olist empirical purchase-to-
+delivery distribution, then rescaled to a subscription-kit fulfilment range, so
+the right-skewed shape of real logistics is preserved at a plausible absolute
+level. One state is deliberately made worse than the rest so the launch
+dashboard has a genuine root cause to surface.
 """
 from __future__ import annotations
 
@@ -612,12 +821,29 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-BASE_FULFILLMENT_DAYS = 5
+# Olist's median purchase-to-delivery is ~10-12 days, which describes a
+# marketplace shipping a one-off order, not a subscription box operator
+# fulfilling a recurring kit. The empirical *shape* (long right tail, occasional
+# very slow deliveries) is what we want; the level is rescaled to this target so
+# the SLA threshold in Task 8 sits at a meaningful point on the distribution.
+# Calibrated against the 10-day SLA so the baseline lands near 88% on-time and
+# the injected problem region near 56% — a clear, investigable gap where both
+# ends remain plausible. (A larger penalty drives the problem region to a 0%
+# on-time rate, which is not a root cause an analyst would find credible.)
+TARGET_MEDIAN_FULFILLMENT_DAYS = 5.0
+
+LOST_RATE_BASELINE = 0.02
+LOST_RATE_PROBLEM_STATE = 0.08
+
+NEVER_LOGS_IN_RATE = 0.15
+FIRST_LOGIN_MEAN_DAYS = 5.0
+MAX_FIRST_LOGIN_DAYS = 30
+FIRST_CYCLE_TASK_COUNT = 8
 
 
 def generate_kit_deliveries(
     subscriptions: pd.DataFrame,
-    delay_days_sample: np.ndarray,
+    duration_days_sample: np.ndarray,
     problem_state: str,
     problem_delay_penalty_days: int,
     seed: int,
@@ -625,19 +851,25 @@ def generate_kit_deliveries(
     """Return one row per account describing its first-kit delivery outcome."""
     rng = np.random.default_rng(seed)
     n = len(subscriptions)
+    is_problem_state = subscriptions["state"].values == problem_state
 
-    sampled_delays = rng.choice(delay_days_sample, size=n, replace=True)
-    penalty = np.where(subscriptions["state"].values == problem_state, problem_delay_penalty_days, 0)
-    # Floor total delay so kit_delivered_date can never land before signup.
-    total_delay = np.maximum(sampled_delays + penalty, -BASE_FULFILLMENT_DAYS)
+    sampled = rng.choice(duration_days_sample, size=n, replace=True)
+    rescale = TARGET_MEDIAN_FULFILLMENT_DAYS / np.median(duration_days_sample)
+    penalty = np.where(is_problem_state, problem_delay_penalty_days, 0)
+    # At least one day: a kit is picked, packed, and shipped before it arrives.
+    duration_days = np.maximum(
+        np.round(sampled * rescale + penalty), 1
+    ).astype(int)
 
     lost_mask = rng.uniform(size=n) < np.where(
-        subscriptions["state"].values == problem_state, 0.08, 0.02
+        is_problem_state, LOST_RATE_PROBLEM_STATE, LOST_RATE_BASELINE
     )
 
     delivered_dates = [
-        None if lost else signup + dt.timedelta(days=BASE_FULFILLMENT_DAYS + int(delay))
-        for signup, delay, lost in zip(subscriptions["pawtrail_signup_date"], total_delay, lost_mask)
+        None if lost else signup + dt.timedelta(days=int(duration))
+        for signup, duration, lost in zip(
+            subscriptions["pawtrail_signup_date"], duration_days, lost_mask
+        )
     ]
 
     return pd.DataFrame(
@@ -645,7 +877,7 @@ def generate_kit_deliveries(
             "account_id": subscriptions["account_id"],
             "kit_delivered_date": delivered_dates,
             "kit_lost": lost_mask,
-            "delivery_delay_days": total_delay,
+            "delivery_duration_days": duration_days,
         }
     )
 
@@ -655,13 +887,30 @@ def generate_digital_engagement(subscriptions: pd.DataFrame, seed: int) -> pd.Da
     rng = np.random.default_rng(seed)
     n = len(subscriptions)
 
-    never_logs_in = rng.uniform(size=n) < 0.15
-    days_to_first_login = rng.integers(0, 21, size=n)
-    tasks_completed = np.where(never_logs_in, 0, rng.integers(0, 5, size=n))
+    never_logs_in = rng.uniform(size=n) < NEVER_LOGS_IN_RATE
+
+    # Right-skewed, not uniform: accounts that engage at all tend to do so within
+    # the first few days. A uniform 0-20 day draw would put only a third of
+    # logins inside the 7-day window purely as an artefact of the sampler, making
+    # the 7-day digital activation rate a property of the generator rather than
+    # something the funnel can meaningfully report.
+    days_to_first_login = np.minimum(
+        np.round(rng.exponential(FIRST_LOGIN_MEAN_DAYS, size=n)),
+        MAX_FIRST_LOGIN_DAYS,
+    ).astype(int)
+
+    # Accounts that come back quickly complete more of the first-cycle tasks, so
+    # task completion carries a signal instead of being uniform noise.
+    task_rate = np.clip(1.0 - days_to_first_login / MAX_FIRST_LOGIN_DAYS, 0.05, 1.0)
+    tasks_completed = np.where(
+        never_logs_in, 0, rng.binomial(FIRST_CYCLE_TASK_COUNT, task_rate)
+    )
 
     first_login_date = [
         None if skip else signup + dt.timedelta(days=int(d))
-        for signup, d, skip in zip(subscriptions["pawtrail_signup_date"], days_to_first_login, never_logs_in)
+        for signup, d, skip in zip(
+            subscriptions["pawtrail_signup_date"], days_to_first_login, never_logs_in
+        )
     ]
 
     return pd.DataFrame(
@@ -679,7 +928,7 @@ def generate_digital_engagement(subscriptions: pd.DataFrame, seed: int) -> pd.Da
 pytest generator/tests/test_generate_activity.py -v
 ```
 
-Expected: 3 passed.
+Expected: 4 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -697,8 +946,8 @@ git commit -m "Generate synthetic kit-delivery and digital-engagement events"
 - Test: `generator/tests/test_generate_business_data.py`
 
 **Interfaces:**
-- Consumes: `LAUNCH_DATE` from Task 3's `generator.generate_subscriptions`; a `subscriptions: pd.DataFrame` with a `channel` column for `generate_sales_pitches`.
-- Produces: `generate_premium_base(state_distribution, total_eligible) -> pd.DataFrame` (`state, eligible_premium_accounts`); `generate_pricing() -> pd.DataFrame` (`pet_tier, monthly_price_usd, kit_cogs_usd, shipping_cost_usd`); `generate_marketing_spend(launch_date, launch_days, seed) -> pd.DataFrame` (`week_start_date, channel, spend_usd`); `generate_sales_pitches(subscriptions, seed) -> pd.DataFrame` (`pitch_id, won`). Consumed by Task 6's `build_seeds.py`.
+- Consumes: `LAUNCH_DATE` from Task 3's `generator.generate_subscriptions`; a `subscriptions: pd.DataFrame` with `channel` and `state` columns for `generate_sales_pitches`.
+- Produces: `generate_premium_base(state_distribution, total_eligible) -> pd.DataFrame` (`state, eligible_premium_accounts`); `generate_pricing() -> pd.DataFrame` (`pet_tier, monthly_price_usd, kit_cogs_usd, shipping_cost_usd`); `generate_marketing_spend(launch_date, launch_days, seed) -> pd.DataFrame` (`week_start_date, channel, spend_usd`); `generate_sales_pitches(subscriptions, seed) -> pd.DataFrame` (`pitch_id, state, pitch_date, won`). Consumed by Task 6's `build_seeds.py`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -718,13 +967,13 @@ from generator.generate_business_data import (
 
 
 def test_premium_base_scales_with_state_distribution():
-    state_distribution = pd.Series({"SP": 0.6, "RJ": 0.4})
+    state_distribution = pd.Series({"CA": 0.6, "TX": 0.4})
 
     result = generate_premium_base(state_distribution, total_eligible=1000)
 
     by_state = result.set_index("state")["eligible_premium_accounts"]
-    assert by_state["SP"] == 600
-    assert by_state["RJ"] == 400
+    assert by_state["CA"] == 600
+    assert by_state["TX"] == 400
 
 
 def test_pricing_has_one_row_per_tier_with_positive_margin():
@@ -758,6 +1007,8 @@ def test_sales_pitches_win_count_matches_sales_assisted_subscriptions():
     subscriptions = pd.DataFrame(
         {
             "account_id": [f"a{i}" for i in range(10)],
+            "state": ["CA"] * 5 + ["TX"] * 5,
+            "pawtrail_signup_date": [dt.date(2026, 1, 5)] * 10,
             "channel": ["sales_assisted"] * 4 + ["self_serve"] * 6,
         }
     )
@@ -766,6 +1017,26 @@ def test_sales_pitches_win_count_matches_sales_assisted_subscriptions():
 
     assert result["won"].sum() == 4
     assert len(result) > 4  # some pitches must have been lost
+    assert result["pitch_id"].is_unique
+
+
+def test_win_rate_is_emergent_not_a_fixed_constant():
+    """Win rate must vary by state rather than reproducing a single assumed
+    value. A hard-coded win rate turns the dashboard's headline stat tile into
+    a restatement of a generator assumption."""
+    subscriptions = pd.DataFrame(
+        {
+            "account_id": [f"a{i}" for i in range(3000)],
+            "state": ["CA", "TX", "FL"] * 1000,
+            "pawtrail_signup_date": [dt.date(2026, 1, 5)] * 3000,
+            "channel": ["sales_assisted"] * 3000,
+        }
+    )
+
+    result = generate_sales_pitches(subscriptions, seed=5)
+    win_rate_by_state = result.groupby("state")["won"].mean()
+
+    assert win_rate_by_state.max() - win_rate_by_state.min() > 0.05
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -792,6 +1063,11 @@ import numpy as np
 import pandas as pd
 
 PET_TIERS = ["small", "medium", "large"]
+
+# Per-state sales win propensity. Spread deterministically across this range and
+# only the state assignment is seeded, so the overall win rate emerges from the
+# generated pipeline instead of being a constant handed to the generator.
+WIN_PROPENSITY_RANGE = (0.22, 0.48)
 
 
 def generate_premium_base(state_distribution: pd.Series, total_eligible: int) -> pd.DataFrame:
@@ -838,23 +1114,39 @@ def generate_marketing_spend(launch_date: dt.date, launch_days: int, seed: int) 
 
 
 def generate_sales_pitches(subscriptions: pd.DataFrame, seed: int) -> pd.DataFrame:
-    """Return one row per sales-assisted pitch, won or lost.
+    """Return one row per sales-assisted pitch, won or lost, tagged by state.
 
-    The number of pitches is derived from the number of sales-assisted
-    subscriptions divided by an assumed win rate, so the generated data is
-    internally consistent with the subscriptions already created.
+    Every won pitch corresponds to a sales-assisted subscription that actually
+    exists, so the pipeline stays internally consistent. The number of *lost*
+    pitches is drawn per state from a varying win propensity, which means the
+    reported win rate is an emergent property of the generated pipeline and
+    varies by region.
+
+    The earlier approach — dividing the won count by a fixed `assumed_win_rate`
+    — made the headline win rate exactly the constant the generator was handed,
+    so the dashboard would have displayed an assumption as if it were a finding.
     """
     rng = np.random.default_rng(seed)
-    assumed_win_rate = 0.35
-    n_won = (subscriptions["channel"] == "sales_assisted").sum()
-    n_total_pitches = int(round(n_won / assumed_win_rate))
-    n_lost = n_total_pitches - n_won
+    won = subscriptions[subscriptions["channel"] == "sales_assisted"]
 
-    pitch_ids = [f"pitch_{i:05d}" for i in range(n_total_pitches)]
-    won_flags = np.array([True] * n_won + [False] * n_lost)
-    rng.shuffle(won_flags)
+    states = sorted(subscriptions["state"].unique())
+    propensity = dict(
+        zip(states, rng.permutation(np.linspace(*WIN_PROPENSITY_RANGE, num=len(states))))
+    )
 
-    return pd.DataFrame({"pitch_id": pitch_ids, "won": won_flags})
+    rows = []
+    for state, pitch_date in zip(won["state"], won["pawtrail_signup_date"]):
+        rows.append({"state": state, "pitch_date": pitch_date, "won": True})
+        # Losses before this win: geometric in the state's win propensity, so
+        # wins / total converges on that propensity rather than on a constant.
+        # They are dated to the won pitch they preceded, which is enough for the
+        # semantic layer to have an aggregation time dimension.
+        for _ in range(int(rng.geometric(propensity[state])) - 1):
+            rows.append({"state": state, "pitch_date": pitch_date, "won": False})
+
+    pitches = pd.DataFrame(rows)
+    pitches.insert(0, "pitch_id", [f"pitch_{i:05d}" for i in range(len(pitches))])
+    return pitches
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -863,7 +1155,7 @@ def generate_sales_pitches(subscriptions: pd.DataFrame, seed: int) -> pd.DataFra
 pytest generator/tests/test_generate_business_data.py -v
 ```
 
-Expected: 5 passed.
+Expected: 6 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -902,11 +1194,11 @@ def _fixture_reference_and_seeds_dirs(tmp_path, monkeypatch):
     fast fixture locations instead of the real Olist download."""
     ref_dir = tmp_path / "reference"
     ref_dir.mkdir()
-    pd.Series({"SP": 0.6, "RJ": 0.3, PROBLEM_STATE: 0.1}, name="share").to_csv(
+    pd.Series({"CA": 0.6, "TX": 0.3, PROBLEM_STATE: 0.1}, name="share").to_csv(
         ref_dir / "reference_state_distribution.csv"
     )
-    pd.DataFrame({"delay_days": [-2, -1, 0, 1, 2, 3]}).to_csv(
-        ref_dir / "reference_delivery_delays.csv", index=False
+    pd.DataFrame({"duration_days": [3, 5, 6, 7, 9, 14]}).to_csv(
+        ref_dir / "reference_delivery_durations.csv", index=False
     )
     monkeypatch.setattr(build_seeds_module, "REFERENCE_DIR", ref_dir)
     monkeypatch.setattr(build_seeds_module, "SEEDS_DIR", tmp_path / "seeds")
@@ -929,7 +1221,7 @@ def test_build_seeds_writes_all_seed_files_with_matching_account_counts():
     assert len(deliveries) == N_ACCOUNTS
     assert len(engagement) == N_ACCOUNTS
     assert set(deliveries["account_id"]) == set(subs["account_id"])
-    assert len(premium_base) == 3  # SP, RJ, problem state
+    assert len(premium_base) == 3  # CA, TX, problem state
     assert len(pricing) == 3  # pet tiers
     assert len(spend) > 0
     assert len(pitches) > 0
@@ -973,45 +1265,57 @@ SEEDS_DIR = Path(__file__).parent.parent / "pawtrail_dbt" / "seeds"
 N_ACCOUNTS = 3000
 LAUNCH_DAYS = 120
 SEED = 42
-PROBLEM_STATE = "BA"
-PROBLEM_DELAY_PENALTY_DAYS = 12
+PROBLEM_STATE = "OH"
+# Calibrated against the 10-day kit SLA: this lands the problem region near 56%
+# on-time against an ~88% baseline. A larger penalty (the original 12) pushes it
+# to 0%, which reads as a broken generator rather than an operational problem.
+PROBLEM_DELAY_PENALTY_DAYS = 5
 # Kept well above N_ACCOUNTS so the resulting attach rate stays realistic (< 100%).
 TOTAL_ELIGIBLE_PREMIUM_ACCOUNTS = 15000
+
+# Independent seeds per generator. Reusing one seed across generators draws from
+# the same stream at different offsets, which is fragile: reordering a draw in
+# one generator silently changes the values every other generator produces.
+SUBSCRIPTION_SEED = SEED
+DELIVERY_SEED = SEED + 1
+ENGAGEMENT_SEED = SEED + 2
+SPEND_SEED = SEED + 3
+PITCH_SEED = SEED + 4
 
 
 def _load_reference_distributions() -> tuple[pd.Series, "pd.Series[int]"]:
     state_distribution = pd.read_csv(
         REFERENCE_DIR / "reference_state_distribution.csv", index_col=0
     )["share"]
-    delay_days_sample = pd.read_csv(REFERENCE_DIR / "reference_delivery_delays.csv")[
-        "delay_days"
+    duration_days_sample = pd.read_csv(REFERENCE_DIR / "reference_delivery_durations.csv")[
+        "duration_days"
     ].to_numpy()
-    return state_distribution, delay_days_sample
+    return state_distribution, duration_days_sample
 
 
 def build_seeds() -> None:
     SEEDS_DIR.mkdir(parents=True, exist_ok=True)
 
-    state_distribution, delay_days_sample = _load_reference_distributions()
+    state_distribution, duration_days_sample = _load_reference_distributions()
 
     subscriptions = generate_subscriptions(
         n_accounts=N_ACCOUNTS,
         launch_days=LAUNCH_DAYS,
-        seed=SEED,
+        seed=SUBSCRIPTION_SEED,
         state_distribution=state_distribution,
     )
     kit_deliveries = generate_kit_deliveries(
         subscriptions,
-        delay_days_sample=delay_days_sample,
+        duration_days_sample=duration_days_sample,
         problem_state=PROBLEM_STATE,
         problem_delay_penalty_days=PROBLEM_DELAY_PENALTY_DAYS,
-        seed=SEED,
+        seed=DELIVERY_SEED,
     )
-    digital_engagement = generate_digital_engagement(subscriptions, seed=SEED)
+    digital_engagement = generate_digital_engagement(subscriptions, seed=ENGAGEMENT_SEED)
     premium_base = generate_premium_base(state_distribution, TOTAL_ELIGIBLE_PREMIUM_ACCOUNTS)
     pricing = generate_pricing()
-    marketing_spend = generate_marketing_spend(LAUNCH_DATE, LAUNCH_DAYS, seed=SEED)
-    sales_pitches = generate_sales_pitches(subscriptions, seed=SEED)
+    marketing_spend = generate_marketing_spend(LAUNCH_DATE, LAUNCH_DAYS, seed=SPEND_SEED)
+    sales_pitches = generate_sales_pitches(subscriptions, seed=PITCH_SEED)
 
     subscriptions.to_csv(SEEDS_DIR / "raw_subscriptions.csv", index=False)
     kit_deliveries.to_csv(SEEDS_DIR / "raw_kit_deliveries.csv", index=False)
@@ -1062,7 +1366,7 @@ git commit -m "Orchestrate generators into dbt seed files"
 
 **Interfaces:**
 - Consumes: seeds `raw_subscriptions`, `raw_kit_deliveries`, `raw_digital_engagement` from Task 6.
-- Produces: `stg_subscriptions(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date)`, `stg_kit_deliveries(account_id, kit_delivered_date, kit_lost, delivery_delay_days)`, `stg_digital_engagement(account_id, first_login_date, care_tasks_completed_first_cycle)` — all referenced by Task 8 onward via `{{ ref(...) }}`.
+- Produces: `stg_subscriptions(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date)`, `stg_kit_deliveries(account_id, kit_delivered_date, kit_lost, delivery_duration_days)`, `stg_digital_engagement(account_id, first_login_date, care_tasks_completed_first_cycle)` — all referenced by Task 8 onward via `{{ ref(...) }}`.
 
 - [ ] **Step 1: Load the seeds into DuckDB**
 
@@ -1158,7 +1462,7 @@ select
     account_id,
     cast(kit_delivered_date as date) as kit_delivered_date,
     cast(kit_lost as boolean) as kit_lost,
-    cast(delivery_delay_days as integer) as delivery_delay_days
+    cast(delivery_duration_days as integer) as delivery_duration_days
 from {{ ref('raw_kit_deliveries') }}
 ```
 
@@ -1195,12 +1499,15 @@ git commit -m "Add core staging models with test-first schema tests"
 
 **Files:**
 - Create: `pawtrail_dbt/tests/assert_digital_activation_requires_login_date.sql`
+- Create: `pawtrail_dbt/tests/assert_signup_never_after_observation_date.sql`
+- Create: `pawtrail_dbt/tests/assert_combined_activation_requires_on_time_kit.sql`
 - Create: `pawtrail_dbt/models/intermediate/_intermediate__models.yml`
 - Create: `pawtrail_dbt/models/intermediate/int_activation_funnel.sql`
 
 **Interfaces:**
 - Consumes: `stg_subscriptions`, `stg_kit_deliveries`, `stg_digital_engagement` from Task 7.
-- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, pawtrail_signup_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, digital_activated_7d, kit_activated_sla, combined_activated_30d)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` instead of being recomputed.
+- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date, observation_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, days_observed, digital_activated_7d, kit_activated_sla, no_digital_access_14d, is_mature_7d, is_mature_sla, is_mature_30d, combined_activated_30d)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` and by `combined_activated_30d` instead of being recomputed.
+- **Cohort maturity:** the `is_mature_*` flags mark accounts that have had the full activation window to succeed or fail. Every activation rate in Task 15 is restricted to the matching mature cohort, so recent signups are not silently counted as failures.
 
 - [ ] **Step 1: Write the singular test before the model exists (red step)**
 
@@ -1214,6 +1521,31 @@ select account_id
 from {{ ref('int_activation_funnel') }}
 where digital_activated_7d = true
   and first_login_date is null
+```
+
+Create `pawtrail_dbt/tests/assert_signup_never_after_observation_date.sql`:
+
+```sql
+-- Fails (returns rows) if an account signed up after the analysis cutoff, which
+-- would make days_observed negative and every maturity flag meaningless.
+select account_id, pawtrail_signup_date, observation_date
+from {{ ref('int_activation_funnel') }}
+where pawtrail_signup_date > observation_date
+   or days_observed < 0
+```
+
+Create `pawtrail_dbt/tests/assert_combined_activation_requires_on_time_kit.sql`:
+
+```sql
+-- Fails (returns rows) if an account counts as combined-activated while its kit
+-- missed the SLA. This is the guard on spec §6's North Star definition: an
+-- earlier draft tested "kit delivered within 30 days" instead of "kit delivered
+-- on time", which let a region with a severe delivery problem still register as
+-- fully activated because almost every kit arrives inside 30 days.
+select account_id
+from {{ ref('int_activation_funnel') }}
+where combined_activated_30d
+  and not kit_activated_sla
 ```
 
 - [ ] **Step 2: Write the schema tests before the model exists**
@@ -1237,6 +1569,12 @@ models:
         tests:
           - not_null
       - name: combined_activated_30d
+        tests:
+          - not_null
+      - name: days_observed
+        tests:
+          - not_null
+      - name: is_mature_30d
         tests:
           - not_null
 ```
@@ -1268,33 +1606,74 @@ digital_engagement as (
     select * from {{ ref('stg_digital_engagement') }}
 ),
 
+-- The analysis cutoff. In a scheduled pipeline this would be current_date; here
+-- the dataset is a fixed simulated window, so the latest signup stands in for
+-- "as of today". Every maturity flag below is measured against it.
+observation as (
+    select max(pawtrail_signup_date) as observation_date
+    from {{ ref('stg_subscriptions') }}
+),
+
 joined as (
     select
         s.account_id,
         s.state,
         s.pet_tier,
         s.channel,
+        s.premium_tenure_days,
         s.pawtrail_signup_date,
+        o.observation_date,
         d.first_login_date,
         d.care_tasks_completed_first_cycle,
         k.kit_delivered_date,
         k.kit_lost,
         date_diff('day', s.pawtrail_signup_date, d.first_login_date) as days_to_first_login,
-        date_diff('day', s.pawtrail_signup_date, k.kit_delivered_date) as days_to_kit_delivery
+        date_diff('day', s.pawtrail_signup_date, k.kit_delivered_date) as days_to_kit_delivery,
+        date_diff('day', s.pawtrail_signup_date, o.observation_date) as days_observed
     from subscriptions s
+    cross join observation o
     left join digital_engagement d on s.account_id = d.account_id
     left join kit_deliveries k on s.account_id = k.account_id
+),
+
+flagged as (
+    select
+        *,
+        (first_login_date is not null
+            and days_to_first_login <= {{ var('digital_activation_window_days') }}
+        ) as digital_activated_7d,
+        (kit_delivered_date is not null
+            and not kit_lost
+            and days_to_kit_delivery <= {{ var('kit_sla_days') }}
+        ) as kit_activated_sla,
+        (first_login_date is null
+            or days_to_first_login > {{ var('at_risk_no_login_days') }}
+        ) as no_digital_access_14d,
+        -- Cohort maturity. An account that signed up four days before the
+        -- observation date has not yet had 30 days to activate, so counting it
+        -- as a failure would understate activation in exactly the most recent
+        -- weeks — the ones a launch dashboard leans on hardest. These flags let
+        -- the metric layer restrict each rate to accounts that have actually had
+        -- the full window.
+        (days_observed >= {{ var('digital_activation_window_days') }}) as is_mature_7d,
+        (days_observed >= {{ var('kit_sla_days') }}) as is_mature_sla,
+        (days_observed >= {{ var('combined_activation_window_days') }}) as is_mature_30d
+    from joined
 )
 
 select
     *,
-    (first_login_date is not null and days_to_first_login <= 7) as digital_activated_7d,
-    (kit_delivered_date is not null and not kit_lost and days_to_kit_delivery <= 10) as kit_activated_sla,
+    -- The launch North Star, per spec §6: confirmed digital usage AND an
+    -- ON-TIME first kit, inside 30 days. Reusing kit_activated_sla rather than
+    -- re-testing "delivered within 30 days" matters — nearly every kit arrives
+    -- inside 30 days, so the looser rule would let a region with a severe
+    -- delivery problem still score as fully activated.
     (
-        first_login_date is not null and days_to_first_login <= 30
-        and kit_delivered_date is not null and not kit_lost and days_to_kit_delivery <= 30
+        first_login_date is not null
+        and days_to_first_login <= {{ var('combined_activation_window_days') }}
+        and kit_activated_sla
     ) as combined_activated_30d
-from joined
+from flagged
 ```
 
 - [ ] **Step 5: Run `dbt build` to verify it passes**
@@ -1305,13 +1684,50 @@ dbt build --profiles-dir . --select intermediate
 cd ..
 ```
 
-Expected: model built, all tests `PASS` (including the singular test).
+Expected: model built, all tests `PASS` (including the singular tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Prove the North Star test actually catches the bug it guards (meaningful red)**
+
+Every other red step in this plan fails because the model file does not exist
+yet — that is a missing file, not a violated assertion, and it never
+demonstrates that a test can catch anything. This step closes that gap once,
+on the assertion that matters most.
+
+Temporarily replace the `combined_activated_30d` expression with the looser
+rule the spec does *not* call for:
+
+```sql
+    (
+        first_login_date is not null
+        and days_to_first_login <= {{ var('combined_activation_window_days') }}
+        and kit_delivered_date is not null
+        and not kit_lost
+        and days_to_kit_delivery <= {{ var('combined_activation_window_days') }}
+    ) as combined_activated_30d
+```
+
+Then run:
 
 ```bash
-git add pawtrail_dbt/tests/assert_digital_activation_requires_login_date.sql pawtrail_dbt/models/intermediate/
-git commit -m "Add activation funnel intermediate model with test-first business-rule test"
+cd pawtrail_dbt
+dbt build --profiles-dir . --select intermediate
+cd ..
+```
+
+Expected: `assert_combined_activation_requires_on_time_kit` **FAILS**, reporting
+the accounts whose kit missed the 10-day SLA but still arrived inside 30 days
+and were counted as activated anyway. Confirm the failure count is material
+(hundreds of rows, concentrated in the problem region) — that is the size of the
+overstatement the looser definition would have hidden.
+
+Now restore the `kit_activated_sla` version from Step 4 and re-run; the test
+returns to `PASS`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add pawtrail_dbt/tests/assert_digital_activation_requires_login_date.sql pawtrail_dbt/tests/assert_signup_never_after_observation_date.sql pawtrail_dbt/tests/assert_combined_activation_requires_on_time_kit.sql pawtrail_dbt/models/intermediate/
+git commit -m "Add activation funnel with cohort maturity and SLA-based North Star"
 ```
 
 ---
@@ -1415,7 +1831,7 @@ git commit -m "Add dim_accounts and fct_subscriptions marts"
 
 **Interfaces:**
 - Consumes: `int_activation_funnel` (Task 8), `stg_kit_deliveries` (Task 7), `dim_accounts` and `fct_subscriptions` (Task 9).
-- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_30d, days_to_first_login, days_to_kit_delivery, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, kit_delivered_date, kit_lost, delivery_delay_days, kit_activated_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
+- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_30d, no_digital_access_14d, days_to_first_login, days_to_kit_delivery, days_observed, is_mature_7d, is_mature_sla, is_mature_30d, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, pawtrail_signup_date, kit_delivered_date, kit_lost, delivery_duration_days, kit_activated_sla, is_mature_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
 
 - [ ] **Step 1: Write the singular test before the models exist**
 
@@ -1473,8 +1889,13 @@ select
     digital_activated_7d,
     kit_activated_sla,
     combined_activated_30d,
+    no_digital_access_14d,
     days_to_first_login,
     days_to_kit_delivery,
+    days_observed,
+    is_mature_7d,
+    is_mature_sla,
+    is_mature_30d,
     care_tasks_completed_first_cycle
 from {{ ref('int_activation_funnel') }}
 ```
@@ -1485,10 +1906,14 @@ Create `pawtrail_dbt/models/marts/fct_kit_deliveries.sql`:
 select
     k.account_id,
     a.state,
+    f.pawtrail_signup_date,
     k.kit_delivered_date,
     k.kit_lost,
-    k.delivery_delay_days,
-    f.kit_activated_sla
+    k.delivery_duration_days,
+    f.kit_activated_sla,
+    -- Carried so the on-time rate can exclude accounts whose SLA window has not
+    -- closed yet, matching the cohort treatment of the activation rates.
+    f.is_mature_sla
 from {{ ref('stg_kit_deliveries') }} k
 left join {{ ref('dim_accounts') }} a on k.account_id = a.account_id
 left join {{ ref('int_activation_funnel') }} f on k.account_id = f.account_id
@@ -1529,7 +1954,7 @@ git commit -m "Add fct_activation_events and fct_kit_deliveries marts"
 
 **Interfaces:**
 - Consumes: seeds `raw_pricing`, `raw_premium_base`, `raw_marketing_spend`, `raw_sales_pitches` from Task 6.
-- Produces: `dim_pricing(pet_tier, monthly_price_usd, kit_cogs_usd, shipping_cost_usd)`; `fct_premium_base(state, eligible_premium_accounts)`; `fct_marketing_spend(week_start_date, channel, spend_usd)`; `fct_sales_pitches(pitch_id, won)` — consumed by Task 12, 13, and Task 14's semantic models.
+- Produces: `dim_pricing(pet_tier, monthly_price_usd, kit_cogs_usd, shipping_cost_usd)`; `fct_premium_base(state, eligible_premium_accounts)`; `fct_marketing_spend(week_start_date, channel, spend_usd)`; `fct_sales_pitches(pitch_id, state, pitch_date, won)` — consumed by Task 12, 13, and Task 14's semantic models.
 
 - [ ] **Step 1: Write the staging schema tests before the models exist**
 
@@ -1655,6 +2080,8 @@ Create `pawtrail_dbt/models/staging/stg_sales_pitches.sql`:
 ```sql
 select
     pitch_id,
+    state,
+    cast(pitch_date as date) as pitch_date,
     cast(won as boolean) as won
 from {{ ref('raw_sales_pitches') }}
 ```
@@ -1760,6 +2187,10 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
 ```yaml
   - name: fct_weekly_attach
     columns:
+      - name: weekly_attach_key
+        tests:
+          - unique
+          - not_null
       - name: state
         tests:
           - not_null
@@ -1836,6 +2267,10 @@ cumulative as (
 )
 
 select
+    -- Surrogate key. The grain is (state, week), so neither column alone is
+    -- unique; declaring `state` as the semantic model's primary entity would be
+    -- a false uniqueness claim and can fan out joins.
+    c.state || '_' || cast(c.signup_week as varchar) as weekly_attach_key,
     c.state,
     c.signup_week,
     c.new_subscriptions,
@@ -1873,7 +2308,7 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` (Task 7), `int_activation_funnel` (Task 8), `fct_marketing_spend` and `dim_pricing` (Task 11).
-- Produces: `fct_weekly_channel_economics(channel, signup_week, new_subscriptions, activated_subscriptions, spend_usd, cac, cost_per_activated_account, avg_price, contribution_margin_per_subscription)` — consumed by Task 14's `weekly_channel_economics` semantic model.
+- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, spend_usd, cac, cost_per_activated_account, avg_price, contribution_margin_per_subscription)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list.
 
 - [ ] **Step 1: Write the schema tests before the model exists**
 
@@ -1882,6 +2317,10 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
 ```yaml
   - name: fct_weekly_channel_economics
     columns:
+      - name: channel_week_key
+        tests:
+          - unique
+          - not_null
       - name: channel
         tests:
           - not_null
@@ -1918,14 +2357,26 @@ with subs as (
 ),
 
 activation as (
-    select account_id, combined_activated_30d
+    select account_id, combined_activated_30d, is_mature_30d
     from {{ ref('int_activation_funnel') }}
 ),
 
-subs_with_activation as (
-    select s.channel, s.signup_week, s.account_id, a.combined_activated_30d
+-- Contribution margin is joined per account at its own pet tier. Averaging the
+-- three tier prices unweighted (the earlier approach) produced the same constant
+-- in every channel and week, so the metric drew a flat line that no amount of
+-- segmentation could move.
+subs_priced as (
+    select
+        s.channel,
+        s.signup_week,
+        s.account_id,
+        a.combined_activated_30d,
+        a.is_mature_30d,
+        p.monthly_price_usd,
+        p.monthly_price_usd - p.kit_cogs_usd - p.shipping_cost_usd as contribution_margin
     from subs s
     left join activation a on s.account_id = a.account_id
+    left join {{ ref('dim_pricing') }} p on s.pet_tier = p.pet_tier
 ),
 
 weekly_subs as (
@@ -1933,8 +2384,15 @@ weekly_subs as (
         channel,
         signup_week,
         count(*) as new_subscriptions,
-        sum(case when combined_activated_30d then 1 else 0 end) as activated_subscriptions
-    from subs_with_activation
+        -- Restricted to the mature cohort for the same reason the activation
+        -- metrics are: a week-old signup that has not activated yet is not a
+        -- failed acquisition, and counting it as one inflates recent CPA.
+        sum(case when is_mature_30d then 1 else 0 end) as mature_subscriptions,
+        sum(case when combined_activated_30d and is_mature_30d then 1 else 0 end)
+            as activated_subscriptions,
+        avg(monthly_price_usd) as avg_price,
+        avg(contribution_margin) as contribution_margin_per_subscription
+    from subs_priced
     group by 1, 2
 ),
 
@@ -1946,26 +2404,25 @@ spend as (
     from {{ ref('fct_marketing_spend') }}
 ),
 
-pricing_avg as (
-    select
-        avg(monthly_price_usd) as avg_price,
-        avg(kit_cogs_usd + shipping_cost_usd) as avg_variable_cost
-    from {{ ref('dim_pricing') }}
-)
-
 select
+    -- Surrogate key: the grain is (channel, week), so `channel` alone is not a
+    -- valid primary entity for the semantic model.
+    w.channel || '_' || cast(w.signup_week as varchar) as channel_week_key,
     w.channel,
     w.signup_week,
     w.new_subscriptions,
+    w.mature_subscriptions,
     w.activated_subscriptions,
     s.spend_usd,
     s.spend_usd / nullif(w.new_subscriptions, 0) as cac,
+    -- Denominator is the activated share of the *mature* cohort applied to all
+    -- acquired accounts, so a week of recent signups does not report an
+    -- artificially catastrophic cost per activated account.
     s.spend_usd / nullif(w.activated_subscriptions, 0) as cost_per_activated_account,
-    p.avg_price,
-    p.avg_price - p.avg_variable_cost as contribution_margin_per_subscription
+    w.avg_price,
+    w.contribution_margin_per_subscription
 from weekly_subs w
 left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
-cross join pricing_avg p
 ```
 
 - [ ] **Step 4: Run `dbt build` to verify it passes**
@@ -1997,14 +2454,143 @@ git commit -m "Add fct_weekly_channel_economics mart for CAC and unit-economics 
 
 ---
 
+## Task 13b: Mart — fct_at_risk_accounts (test-first)
+
+Spec §6 defines an "Early risk signals" category and the source context calls
+the at-risk list "the practical Customer Success work queue during launch" —
+it is the one artefact in the catalogue that maps directly onto the target
+role's "customer-health KPIs". It is also cheap: `int_activation_funnel`
+already carries every input.
+
+**Files:**
+- Create: `pawtrail_dbt/models/marts/_marts__risk.yml`
+- Create: `pawtrail_dbt/models/marts/fct_at_risk_accounts.sql`
+- Create: `pawtrail_dbt/tests/assert_risk_driver_is_exhaustive.sql`
+
+**Interfaces:**
+- Consumes: `int_activation_funnel` (Task 8).
+- Produces: `fct_at_risk_accounts(account_id, state, channel, pet_tier, pawtrail_signup_date, days_observed, no_digital_access_14d, kit_failed_sla, no_tasks_completed, risk_driver, is_at_risk)` — one row per account old enough to be judged, tagged by which leg failed. Consumed by Task 14's `at_risk_accounts` semantic model.
+
+- [ ] **Step 1: Write the singular test before the model exists**
+
+Create `pawtrail_dbt/tests/assert_risk_driver_is_exhaustive.sql`:
+
+```sql
+-- Fails (returns rows) if an account carries a risk flag but lands in the
+-- 'healthy' bucket, or is tagged with a driver outside the known set. The
+-- driver column is what makes the queue actionable — an account routed to the
+-- wrong team is worse than one that was never flagged.
+select account_id, risk_driver
+from {{ ref('fct_at_risk_accounts') }}
+where risk_driver not in (
+        'healthy', 'digital_failure', 'physical_failure',
+        'both_legs_failed', 'onboarding_gap'
+      )
+   or (risk_driver = 'healthy'
+       and (no_digital_access_14d or kit_failed_sla or no_tasks_completed))
+```
+
+- [ ] **Step 2: Write the schema tests before the model exists**
+
+Create `pawtrail_dbt/models/marts/_marts__risk.yml`:
+
+```yaml
+version: 2
+
+models:
+  - name: fct_at_risk_accounts
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+      - name: risk_driver
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['healthy', 'digital_failure', 'physical_failure', 'both_legs_failed', 'onboarding_gap']
+      - name: is_at_risk
+        tests:
+          - not_null
+```
+
+- [ ] **Step 3: Run `dbt build` to verify it fails**
+
+```bash
+cd pawtrail_dbt
+dbt build --profiles-dir . --select fct_at_risk_accounts
+cd ..
+```
+
+Expected: compilation error — model not found.
+
+- [ ] **Step 4: Implement the model**
+
+Create `pawtrail_dbt/models/marts/fct_at_risk_accounts.sql`:
+
+```sql
+with funnel as (
+    select * from {{ ref('int_activation_funnel') }}
+),
+
+flagged as (
+    select
+        account_id,
+        state,
+        channel,
+        pet_tier,
+        pawtrail_signup_date,
+        days_observed,
+        no_digital_access_14d,
+        (kit_lost or kit_delivered_date is null or not kit_activated_sla) as kit_failed_sla,
+        (coalesce(care_tasks_completed_first_cycle, 0) = 0) as no_tasks_completed
+    from funnel
+    -- Only accounts that have actually had the chance to fail. Flagging a
+    -- two-day-old signup as "no digital access in 14 days" would fill the CS
+    -- queue with accounts that are simply new.
+    where days_observed >= {{ var('at_risk_no_login_days') }}
+)
+
+select
+    *,
+    case
+        when no_digital_access_14d and kit_failed_sla then 'both_legs_failed'
+        when kit_failed_sla then 'physical_failure'
+        when no_digital_access_14d then 'digital_failure'
+        when no_tasks_completed then 'onboarding_gap'
+        else 'healthy'
+    end as risk_driver,
+    (no_digital_access_14d or kit_failed_sla or no_tasks_completed) as is_at_risk
+from flagged
+```
+
+- [ ] **Step 5: Run `dbt build` to verify it passes**
+
+```bash
+cd pawtrail_dbt
+dbt build --profiles-dir . --select fct_at_risk_accounts
+cd ..
+```
+
+Expected: model built, all tests `PASS`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add pawtrail_dbt/models/marts/_marts__risk.yml pawtrail_dbt/models/marts/fct_at_risk_accounts.sql pawtrail_dbt/tests/assert_risk_driver_is_exhaustive.sql
+git commit -m "Add at-risk account queue tagged by failure driver"
+```
+
+---
+
 ## Task 14: Semantic layer — semantic models
 
 **Files:**
 - Create: `pawtrail_dbt/models/marts/_semantic_models.yml`
 
 **Interfaces:**
-- Consumes: `dim_accounts`, `fct_subscriptions`, `fct_activation_events`, `fct_kit_deliveries`, `fct_weekly_attach`, `fct_weekly_channel_economics`, `fct_sales_pitches` (Tasks 9–13).
-- Produces: five MetricFlow semantic models (`accounts`, `subscriptions`, `activation_events`, `kit_deliveries`, `weekly_attach`, `weekly_channel_economics`, `sales_pitches`) whose measures are consumed by Task 15's metric definitions.
+- Consumes: `dim_accounts`, `fct_subscriptions`, `fct_activation_events`, `fct_kit_deliveries`, `fct_weekly_attach`, `fct_weekly_channel_economics`, `fct_sales_pitches` (Tasks 9–13), `fct_at_risk_accounts` (Task 13b).
+- Produces: eight MetricFlow semantic models (`accounts`, `subscriptions`, `activation_events`, `kit_deliveries`, `weekly_attach`, `weekly_channel_economics`, `sales_pitches`, `at_risk_accounts`) whose measures are consumed by Task 15's metric definitions.
 
 - [ ] **Step 1: Create the semantic models file**
 
@@ -2059,49 +2645,81 @@ semantic_models:
         expr: pawtrail_signup_date
         type_params:
           time_granularity: day
+    # Numerator and denominator are both restricted to the cohort that has had
+    # the full window. Counting an account that signed up four days ago as a
+    # failed 30-day activation is the classic launch-analytics error: it drags
+    # the North Star down hardest in the most recent weeks, which are exactly
+    # the weeks a launch dashboard is read for.
     measures:
-      - name: activation_event_count
-        agg: count
-        expr: account_id
+      - name: mature_accounts_7d
+        agg: sum
+        expr: case when is_mature_7d then 1 else 0 end
+      - name: mature_accounts_sla
+        agg: sum
+        expr: case when is_mature_sla then 1 else 0 end
+      - name: mature_accounts_30d
+        agg: sum
+        expr: case when is_mature_30d then 1 else 0 end
       - name: digitally_activated_accounts
         agg: sum
-        expr: case when digital_activated_7d then 1 else 0 end
+        expr: case when digital_activated_7d and is_mature_7d then 1 else 0 end
       - name: kit_activated_accounts
         agg: sum
-        expr: case when kit_activated_sla then 1 else 0 end
+        expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
       - name: combined_activated_accounts_30d
         agg: sum
-        expr: case when combined_activated_30d then 1 else 0 end
+        expr: case when combined_activated_30d and is_mature_30d then 1 else 0 end
 
   - name: kit_deliveries
     model: ref('fct_kit_deliveries')
+    # Measures need an aggregation time dimension for MetricFlow to validate and
+    # for metric_time to resolve. Signup date is used rather than delivery date:
+    # delivery date is null for lost kits, which are exactly the rows the lost
+    # rate must not drop.
+    defaults:
+      agg_time_dimension: signup_date
     entities:
       - name: account
         type: primary
         expr: account_id
     dimensions:
+      - name: signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
       - name: state
         type: categorical
     measures:
-      - name: kits_delivered
-        agg: count
-        expr: account_id
+      # `kits_shipped` counts every account with a kit obligation, including
+      # lost ones. The earlier name `kits_delivered` was misleading: it was used
+      # as the denominator of the on-time rate while actually counting kits that
+      # never arrived, so "on-time delivery rate" and "lost rate" were quietly
+      # measured against different populations than their names implied.
+      - name: kits_shipped
+        agg: sum
+        expr: case when is_mature_sla then 1 else 0 end
       - name: kits_on_time
         agg: sum
-        expr: case when kit_activated_sla then 1 else 0 end
+        expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
       - name: kits_lost
         agg: sum
-        expr: case when kit_lost then 1 else 0 end
+        expr: case when kit_lost and is_mature_sla then 1 else 0 end
 
   - name: weekly_attach
     model: ref('fct_weekly_attach')
     defaults:
       agg_time_dimension: signup_week
     entities:
-      - name: state
+      # Surrogate key, not `state`: the grain is (state, week), so `state` alone
+      # is not unique and declaring it primary is a false uniqueness claim that
+      # can fan out joins.
+      - name: weekly_attach_row
         type: primary
-        expr: state
+        expr: weekly_attach_key
     dimensions:
+      - name: state
+        type: categorical
       - name: signup_week
         type: time
         type_params:
@@ -2127,10 +2745,14 @@ semantic_models:
     defaults:
       agg_time_dimension: signup_week
     entities:
-      - name: channel
+      # Surrogate key for the same reason as weekly_attach: the grain is
+      # (channel, week), so `channel` alone is not unique.
+      - name: channel_week_row
         type: primary
-        expr: channel
+        expr: channel_week_key
     dimensions:
+      - name: channel
+        type: categorical
       - name: signup_week
         type: time
         type_params:
@@ -2151,10 +2773,19 @@ semantic_models:
 
   - name: sales_pitches
     model: ref('fct_sales_pitches')
+    defaults:
+      agg_time_dimension: pitch_date
     entities:
       - name: pitch
         type: primary
         expr: pitch_id
+    dimensions:
+      - name: pitch_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: state
+        type: categorical
     measures:
       - name: pitches_total
         agg: count
@@ -2162,6 +2793,34 @@ semantic_models:
       - name: pitches_won
         agg: sum
         expr: case when won then 1 else 0 end
+
+  - name: at_risk_accounts
+    model: ref('fct_at_risk_accounts')
+    defaults:
+      agg_time_dimension: signup_date
+    entities:
+      - name: account
+        type: primary
+        expr: account_id
+    dimensions:
+      - name: signup_date
+        type: time
+        expr: pawtrail_signup_date
+        type_params:
+          time_granularity: day
+      - name: state
+        type: categorical
+      - name: channel
+        type: categorical
+      - name: risk_driver
+        type: categorical
+    measures:
+      - name: assessable_accounts
+        agg: count
+        expr: account_id
+      - name: at_risk_accounts_count
+        agg: sum
+        expr: case when is_at_risk then 1 else 0 end
 ```
 
 - [ ] **Step 2: Validate the semantic models**
@@ -2178,7 +2837,12 @@ mf validate-configs
 cd ..
 ```
 
-Expected: `mf validate-configs` reports success with no errors. If it reports a join-path error on `weekly_attach` or `weekly_channel_economics`, this means those measures cannot be grouped by dimensions from other semantic models via their non-`account` primary entities — in that case, only group/query them by their own `state`/`channel` dimension (already sufficient for every metric in Task 15) rather than trying to join them to `accounts`.
+Expected: `mf validate-configs` reports success with no errors.
+
+Note that `weekly_attach` and `weekly_channel_economics` now key on surrogate
+row keys, with `state` and `channel` declared as ordinary categorical
+dimensions. Every metric in Task 15 groups by those dimensions or by
+`metric_time`, so no cross-model join through those entities is required.
 
 - [ ] **Step 3: Commit**
 
@@ -2196,7 +2860,7 @@ git commit -m "Add MetricFlow semantic models over the marts layer"
 
 **Interfaces:**
 - Consumes: every measure defined in Task 14's semantic models.
-- Produces: 12 named metrics queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
+- Produces: 17 named metrics queryable via `mf query --metrics <name>` — the interface Task 16 (Tableau) and Task 19 (NARRATIVE.md) both read from.
 
 - [ ] **Step 1: Define the metrics**
 
@@ -2217,40 +2881,69 @@ metrics:
       numerator: cumulative_subscriptions
       denominator: eligible_premium_accounts
 
+  # Every activation rate divides by its matching *mature* cohort, not by all
+  # accounts. See Task 8: an account that has not yet had the full window has
+  # not failed, and counting it as a failure understates activation in exactly
+  # the most recent weeks.
   - name: digital_activation_rate_7d
     type: ratio
-    label: "Digital Activation Rate (7d)"
+    label: "Digital Activation Rate (7d, mature cohort)"
     type_params:
       numerator: digitally_activated_accounts
-      denominator: activation_event_count
+      denominator: mature_accounts_7d
 
   - name: kit_sla_rate
     type: ratio
-    label: "Kit SLA Activation Rate"
+    label: "Kit SLA Activation Rate (mature cohort)"
     type_params:
       numerator: kit_activated_accounts
-      denominator: activation_event_count
+      denominator: mature_accounts_sla
 
   - name: activation_rate_30d
     type: ratio
-    label: "Combined 30-Day Activation Rate"
+    label: "Combined 30-Day Activation Rate (mature cohort)"
     type_params:
       numerator: combined_activated_accounts_30d
-      denominator: activation_event_count
+      denominator: mature_accounts_30d
+
+  - name: mature_cohort_size_30d
+    type: simple
+    label: "Accounts With a Full 30-Day Window"
+    type_params:
+      measure: mature_accounts_30d
 
   - name: kit_on_time_delivery_rate
     type: ratio
     label: "Kit On-Time Delivery Rate"
     type_params:
       numerator: kits_on_time
-      denominator: kits_delivered
+      denominator: kits_shipped
 
   - name: kit_lost_rate
     type: ratio
     label: "Kit Lost Rate"
     type_params:
       numerator: kits_lost
-      denominator: kits_delivered
+      denominator: kits_shipped
+
+  - name: at_risk_account_rate
+    type: ratio
+    label: "At-Risk Account Rate"
+    type_params:
+      numerator: at_risk_accounts_count
+      denominator: assessable_accounts
+
+  - name: at_risk_accounts
+    type: simple
+    label: "At-Risk Accounts (CS queue size)"
+    type_params:
+      measure: at_risk_accounts_count
+
+  - name: cumulative_subscriptions_to_date
+    type: simple
+    label: "Cumulative Subscriptions to Date"
+    type_params:
+      measure: cumulative_subscriptions
 
   - name: win_rate
     type: ratio
@@ -2297,7 +2990,7 @@ mf list metrics
 cd ..
 ```
 
-Expected: `mf list metrics` shows all 12 metrics defined above.
+Expected: `mf list metrics` shows all 17 metrics defined above.
 
 - [ ] **Step 3: Run the acceptance query — confirm the injected problem segment is actually surfaced**
 
@@ -2305,11 +2998,29 @@ Expected: `mf list metrics` shows all 12 metrics defined above.
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf query --metrics activation_rate_30d --group-by metric_time__week
-mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state
+mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state --order kit_on_time_delivery_rate
+mf query --metrics activation_rate_30d --group-by accounts__state --order activation_rate_30d
 cd ..
 ```
 
-Expected: the second query shows the problem state configured in `generator/build_seeds.py` (`PROBLEM_STATE`, default `"BA"`) with a materially lower on-time delivery rate than other states — this is the concrete proof, called for in spec §8, that the semantic layer surfaces a real root-cause signal rather than just displaying numbers.
+Expected, and all three must hold:
+
+1. `kit_on_time_delivery_rate` sorted ascending puts the configured
+   `PROBLEM_STATE` (default `"OH"`) **first**, at roughly 55-60% against a
+   baseline near 88%. Because Task 2 truncates the region list to the top 12
+   and renormalises, there is no long tail of one-or-two-account states whose
+   meaningless 0% or 100% rate could outrank the real signal — the earlier
+   untruncated Olist distribution reached ~0.05% share, which at 3000 accounts
+   is one or two rows.
+2. The same region is also worst on `activation_rate_30d`, because the North
+   Star requires an **on-time** kit (Task 8). If activation looks flat across
+   regions while delivery does not, the North Star has silently reverted to the
+   looser "delivered within 30 days" rule.
+3. Every region in both queries has a denominator large enough to trust; spot
+   check with `mf query --metrics mature_cohort_size_30d --group-by accounts__state`.
+
+This is the concrete proof, called for in spec §8, that the semantic layer
+surfaces a real root-cause signal rather than just displaying numbers.
 
 - [ ] **Step 4: Export the acceptance query results as the Tableau/narrative control file**
 
@@ -2317,15 +3028,24 @@ Expected: the second query shows the problem state configured in `generator/buil
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
-mf query --metrics attach_rate --group-by weekly_attach__signup_week --csv ../dashboard/control_attach_rate.csv
-mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
+mf query --metrics cumulative_subscriptions_to_date,attach_rate --group-by weekly_attach__signup_week --csv ../dashboard/control_attach_rate.csv
+mf query --metrics attach_rate --group-by weekly_attach__signup_week,weekly_attach__state --csv ../dashboard/control_attach_rate_by_state.csv
+mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
 mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by kit_deliveries__state --csv ../dashboard/control_kit_sla_by_state.csv
-mf query --metrics cac_by_channel,cost_per_activated_account --group-by weekly_channel_economics__signup_week --csv ../dashboard/control_cac_by_channel.csv
-mf query --metrics win_rate --csv ../dashboard/control_win_rate.csv
+mf query --metrics cac_by_channel,cost_per_activated_account --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel --csv ../dashboard/control_cac_by_channel.csv
+mf query --metrics at_risk_account_rate,at_risk_accounts --group-by at_risk_accounts__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
+mf query --metrics win_rate --group-by sales_pitches__state --csv ../dashboard/control_win_rate.csv
 cd ..
 ```
 
-Expected: 6 CSV files created under `dashboard/` — these become both the Tableau data source and the ground truth Task 19's narrative memo must match.
+Expected: 8 CSV files created under `dashboard/` — these become both the Tableau data source and the ground truth Task 19's narrative memo must match.
+
+Each export now matches a view in Task 16: the attach exports carry both the
+national trend and the by-state breakdown the launch-pulse view calls for, the
+CAC export is broken out by channel, and `control_at_risk_by_driver.csv` feeds
+the Customer Success queue view. `mature_cohort_size_30d` travels alongside the
+activation rates so the dashboard can show how much of the base each rate is
+actually computed on.
 
 - [ ] **Step 5: Commit**
 
@@ -2347,12 +3067,13 @@ git commit -m "Define launch metrics in the semantic layer and export control qu
 
 - [ ] **Step 1: Build the workbook in Tableau Public Desktop**
 
-Connect Tableau Public to the six CSV files in `dashboard/`. Build these views, matching spec §6's dashboard structure:
+Connect Tableau Public to the eight CSV files in `dashboard/`. Build these views, matching spec §6's dashboard structure:
 
-1. **Launch pulse** — line chart of `control_weekly_new_subscriptions.csv` (cumulative + weekly new subscriptions) and `control_attach_rate.csv` (attach rate trend by state).
-2. **Activation** — bar/line chart of `control_activation_rates.csv` showing `digital_activation_rate_7d`, `kit_sla_rate`, and `activation_rate_30d` over time.
+1. **Launch pulse** — line chart of `control_weekly_new_subscriptions.csv` (weekly new subscriptions) and `control_attach_rate.csv` (cumulative subscriptions and national attach rate over time), with `control_attach_rate_by_state.csv` as the by-region breakdown.
+2. **Activation** — bar/line chart of `control_activation_rates.csv` showing `digital_activation_rate_7d`, `kit_sla_rate`, and `activation_rate_30d` over time. Plot `mature_cohort_size_30d` as a secondary axis or tooltip so a reader can see how many accounts each rate is computed on — the most recent weeks are deliberately excluded from the 30-day rate until their window closes, and a chart that hides that invites the reader to over-read a thin cohort.
 3. **Kit operations** — bar chart of `control_kit_sla_by_state.csv`, sorted ascending by `kit_on_time_delivery_rate`, so the injected problem state is visually the worst performer.
-4. **Acquisition efficiency** — chart of `control_cac_by_channel.csv` (CAC and cost-per-activated-account by channel over time) plus the single `control_win_rate.csv` value as a stat tile.
+4. **Acquisition efficiency** — chart of `control_cac_by_channel.csv` (CAC and cost-per-activated-account by channel over time) plus `control_win_rate.csv` broken out by state.
+5. **Customer Success queue** — bar chart of `control_at_risk_by_driver.csv` showing at-risk account counts split by `risk_driver` (`digital_failure`, `physical_failure`, `both_legs_failed`, `onboarding_gap`). This is the view that turns the analysis into an action list, and it is what makes the launch dashboard answer "who do we call on Monday" rather than only "how are we doing".
 
 - [ ] **Step 2: Publish to Tableau Public**
 
@@ -2378,9 +3099,21 @@ Built from the semantic-layer metric exports in this directory
 ## Views
 
 1. Launch pulse — cumulative and weekly new subscriptions, attach rate trend
-2. Activation — 7/14/30-day activation rates over time
+   (national and by region)
+2. Activation — 7-day digital, kit SLA, and combined 30-day activation rates
+   over time, with the mature cohort size behind each rate
 3. Kit operations — on-time delivery rate by state
-4. Acquisition efficiency — CAC and cost per activated account by channel
+4. Acquisition efficiency — CAC and cost per activated account by channel,
+   win rate by state
+5. Customer Success queue — at-risk accounts split by failure driver
+
+## Reading the activation rates
+
+Activation rates are computed on the **mature cohort** only: accounts that have
+had the full window (7, 10, or 30 days) to activate. Recent signups are excluded
+from the denominator until their window closes rather than being counted as
+failures, so the most recent weeks show a smaller cohort rather than an
+artificially collapsing rate.
 
 ## Data freshness
 
@@ -2521,11 +3254,26 @@ git commit -m "Add project README"
 
 Create `METRICS.md` mirroring the MetricFlow definitions in
 `pawtrail_dbt/models/marts/_metrics.yml` in human-readable form. For each of
-the 12 metrics listed there, include: name, one-sentence business
+the 17 metrics listed there, include: name, one-sentence business
 definition, formula (numerator/denominator or measure), and which
-semantic model(s) it draws from. Structure the document in the same four
+semantic model(s) it draws from. Structure the document in the same five
 categories used in the dashboard (Task 16): Launch pulse, Activation, Kit
-operations, Acquisition efficiency.
+operations, Acquisition efficiency, Customer Success queue.
+
+Include a **Definitions that carry a judgement call** section documenting the
+three choices where a defensible alternative exists, since these are what an
+interviewer will probe:
+
+- **Cohort maturity.** Activation denominators count only accounts that have had
+  the full window. State the alternative (count everyone) and why it was
+  rejected: it reports recent signups as failures and understates activation
+  precisely in the newest weeks.
+- **On-time vs. delivered.** Combined activation requires the kit to hit the
+  10-day SLA, not merely to arrive within 30 days.
+- **Semi-additivity of attach rate.** `cumulative_subscriptions` and
+  `eligible_premium_accounts` sum across regions within a week but not across
+  weeks, so `attach_rate` is valid grouped by week, or by week and region, and
+  must never be grouped by region alone.
 
 End the document with a **Future extensions** section listing
 catalog metrics from the spec (`docs/superpowers/specs/2026-08-12-pawtrail-launch-analytics-design.md`
@@ -2565,9 +3313,24 @@ launch healthy or not, based on which specific signal; (2) the root cause,
 naming the actual problem state/channel found in the control CSVs and the
 actual gap in on-time delivery rate; (3) a recommendation for the next 30
 days, tied to that root cause (e.g., "escalate the carrier issue in
-[state] before scaling marketing spend into that region"); (4) an explicit
+[state] before scaling marketing spend into that region"), and sized against
+the at-risk queue from `control_at_risk_by_driver.csv` — how many accounts
+Customer Success would actually be calling, split by driver; (4) an explicit
 one-paragraph note on why churn/NRR/LTV are not part of this memo, citing
 the same reasoning as spec §2 and §6.
+
+Add a short **"How these numbers are counted"** paragraph covering the two
+methodology choices a reader would otherwise have to reverse-engineer, both of
+which are the kind of judgement the memo exists to demonstrate:
+
+- Activation rates use the mature cohort only — accounts that have had the full
+  7/10/30-day window. Recent signups are excluded rather than counted as
+  failures, which is why the 30-day rate covers fewer accounts than the total
+  subscriber count.
+- Combined activation requires an **on-time** kit, not merely a delivered one.
+  Nearly every kit arrives inside 30 days, so a "delivered within 30 days" rule
+  would let the problem region score as fully activated and hide the very issue
+  the memo identifies.
 
 - [ ] **Step 3: Commit**
 
@@ -2617,10 +3380,23 @@ cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf validate-configs
 mf query --metrics activation_rate_30d,kit_on_time_delivery_rate --group-by metric_time__week
+mf query --metrics cac_by_channel --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel
+mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state --order kit_on_time_delivery_rate
+mf query --metrics at_risk_account_rate --group-by at_risk_accounts__risk_driver
 cd ..
 ```
 
-Expected: validation succeeds; the query returns non-null, in-bounds ([0, 1]) rates.
+Expected: validation succeeds, and specifically —
+
+- All rates are non-null and in bounds ([0, 1]).
+- **`cac_by_channel` returns non-null values for every week.** An all-null CAC
+  column means the marketing-spend week boundary has drifted away from
+  `date_trunc('week', ...)` again; the `not_null` test on `cac` should have
+  caught it in Step 3, so a failure here means the guard was removed.
+- The problem region sorts first on `kit_on_time_delivery_rate` and no region
+  has a nonsense rate driven by a handful of accounts.
+- The at-risk queue is split across drivers rather than concentrated entirely in
+  one bucket, which would suggest the driver `case` expression is mis-ordered.
 
 - [ ] **Step 5: Confirm the published Tableau dashboard still matches**
 

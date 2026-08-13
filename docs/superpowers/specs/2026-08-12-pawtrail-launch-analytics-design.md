@@ -69,12 +69,25 @@ signups, digital engagement, pet tiers)
 ## 4. Data strategy (hybrid: real + synthetic)
 
 - **Real data (Olist Brazilian E-Commerce, public Kaggle dataset)**: used
-  *only* as a statistical scaffold — its empirical delivery-time distribution
-  (estimated vs. actual delivery date) and state-level geographic distribution
-  are resampled to generate realistic shipment timing/delay patterns and
-  regional spread for PawTrail's kit deliveries. Olist's actual customer,
-  order, or product identities are **not** reused as if they were PawTrail
-  accounts — only the underlying statistical patterns are borrowed.
+  *only* as a statistical scaffold — its empirical **purchase-to-delivery
+  duration** distribution and its regional concentration curve are resampled to
+  generate realistic shipment timing and regional spread for PawTrail's kit
+  deliveries. Olist's actual customer, order, or product identities are **not**
+  reused as if they were PawTrail accounts — only the underlying statistical
+  patterns are borrowed. Two transformations are applied and documented in
+  `data/olist_reference/README.md`:
+  - Duration, **not** estimated-vs-actual delta. Olist's estimated delivery
+    dates are padded by roughly 10–12 days, so the delta measures forecast
+    conservatism rather than how long a shipment took. Durations are then
+    rescaled to a subscription-kit fulfilment range, preserving the right-skewed
+    shape at a plausible absolute level.
+  - The regional concentration curve is mapped onto US state codes by rank, and
+    truncated to the top 12 regions. PawTrail prices in USD, so Brazilian state
+    codes would be internally inconsistent in every chart; and Olist's
+    untruncated tail reaches ~0.05% share, which at this project's volume is one
+    or two accounts per region — enough for a meaningless rate to outrank the
+    deliberately injected problem on a sorted chart. Only the shape is borrowed;
+    no claim is made about any real US market.
 - **Synthetic data (generated, seeded Python script)**: everything specific to
   the subscription mechanic — signup dates following an S-curve adoption
   curve over ~120 days, plan/pet tier, channel (self-serve vs. sales-assisted),
@@ -93,7 +106,9 @@ signups, digital engagement, pet tiers)
 7 days → kit delivered within SLA → first care-plan task completed.
 
 **Marts**: `fct_subscriptions`, `fct_activation_events`, `fct_kit_deliveries`,
-`dim_accounts` (state, pet tier, channel, Premium tenure before attach).
+`fct_at_risk_accounts` (the Customer Success work queue, tagged by failure
+driver), `dim_accounts` (state, pet tier, channel, Premium tenure before
+attach).
 
 **Tests**: dbt schema tests (not_null, unique, relationships, accepted_values)
 on all mart keys and categorical fields, plus singular tests for sanity bounds
@@ -177,6 +192,20 @@ State/region · pet tier/type · channel · Premium tenure before attach
 **North Star for the launch phase**: Combined 30-day activation rate — % of
 subscribing accounts with confirmed digital usage **and** an on-time first
 kit delivery, within the first 30 days.
+
+Two definitional constraints on this metric, both load-bearing:
+
+- **"On-time" means the kit hit the delivery SLA**, not merely that it arrived
+  inside the 30-day window. Almost every kit arrives within 30 days, so the
+  looser reading would let a region with a severe delivery problem still score
+  as fully activated — collapsing the metric's ability to surface the very
+  failure it exists to detect.
+- **The denominator is the mature cohort only** — accounts that have had the
+  full 30 days. Accounts that signed up recently have not failed to activate;
+  they have not yet had the chance. Counting them as failures biases the metric
+  downward hardest in the most recent weeks, which are exactly the weeks a
+  launch dashboard is read for. The same treatment applies to the 7-day digital
+  and kit-SLA rates against their own windows.
 
 **Explicitly excluded, with rationale documented in the narrative memo**:
 LTV:CAC, Rule of 40, Magic Number, Quick Ratio, 12-month churn, NRR — all
