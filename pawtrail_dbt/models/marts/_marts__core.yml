@@ -59,3 +59,37 @@ models:
       - name: pawtrail_signup_date
         tests:
           - not_null
+
+  # `unique` + `not_null` on account_id already rules out fan-out within each
+  # fact. The relationships test covers the other direction: a fact row whose
+  # account has no matching dimension row. That orphan would silently vanish from
+  # every segmented metric in Task 15, because each one joins through
+  # dim_accounts — the numerator would drop the row while an unsegmented total
+  # still counted it, so the same metric would disagree with itself depending on
+  # whether it was grouped.
+  - name: fct_activation_events
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+
+  - name: fct_kit_deliveries
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      # `state` gets its relationships test in Task 11, once fct_premium_base
+      # exists to point at.
+      - name: state
+        tests:
+          - not_null

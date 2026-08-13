@@ -1,0 +1,19 @@
+select
+    account_id,
+    pawtrail_signup_date,
+    digital_activated_7d,
+    kit_activated_sla,
+    combined_activated_7d,
+    combined_activated_14d,
+    combined_activated_30d,
+    no_digital_access_14d,
+    days_to_first_login,
+    days_to_kit_delivery,
+    days_observed,
+    is_mature_7d,
+    is_mature_sla,
+    is_mature_30d,
+    is_mature_combined_7d,
+    is_mature_combined_14d,
+    care_tasks_completed_first_cycle
+from {{ ref('int_activation_funnel') }}
