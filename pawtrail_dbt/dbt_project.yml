@@ -1,0 +1,52 @@
+name: 'pawtrail'
+version: '1.0.0'
+config-version: 2
+
+profile: 'pawtrail'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Activation thresholds live here rather than being repeated as literals inside
+# model SQL, so the SLA the funnel enforces, the metric definitions, and
+# METRICS.md can never drift apart.
+vars:
+  kit_sla_days: 10
+  digital_activation_window_days: 7
+  at_risk_no_login_days: 14
+  # Spec §6 calls for combined activation at 7/14/30 days. 7 reuses
+  # digital_activation_window_days and 30 is the North Star window below; only
+  # the 14-day point needs its own var. It is kept separate from
+  # at_risk_no_login_days, which happens to share the value 14 but answers a
+  # different question — tying them together would mean retuning the risk queue
+  # every time the activation window moved.
+  combined_activation_mid_window_days: 14
+  combined_activation_window_days: 30
+  # Must equal FIRST_CYCLE_TASK_COUNT in the generator (Task 4). It is the
+  # denominator of the task-completion rate, so a silent drift would not error —
+  # it would just report a wrong percentage. Task 7 adds a singular test that
+  # fails if any account completed more tasks than this allows.
+  first_cycle_task_count: 8
+  # The launch attach-rate target the dashboard and memo judge performance
+  # against (spec §6, "Attach rate ... vs. launch target"). 15% sits inside the
+  # 10-30% band the spec's own reference on add-on attach rates cites as typical,
+  # so the comparison reads as a plausible goal rather than a number invented to
+  # flatter the result. It lives here, not in a Tableau constant, so the target
+  # on the chart and the target quoted in NARRATIVE.md cannot disagree.
+  attach_rate_launch_target: 0.15
+
+models:
+  pawtrail:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table

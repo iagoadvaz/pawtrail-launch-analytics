@@ -1,0 +1,7 @@
+pawtrail:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: 'pawtrail.duckdb'
+      threads: 4
