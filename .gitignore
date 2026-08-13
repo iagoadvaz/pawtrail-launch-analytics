@@ -1,0 +1,24 @@
+# Private source material (interview notes, recruiter correspondence, job
+# description). Kept locally as background for the case study, never published
+# with the portfolio repo.
+docs/context/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# dbt
+pawtrail_dbt/target/
+pawtrail_dbt/dbt_packages/
+pawtrail_dbt/logs/
+
+# DuckDB
+*.duckdb
+
+# Real Olist raw download (large; only derived reference distributions are committed)
+data/olist_reference/raw/
+
+# OS
+.DS_Store

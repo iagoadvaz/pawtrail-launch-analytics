@@ -45,7 +45,15 @@ pytest>=8.0
 
 - [ ] **Step 2: Create `.gitignore`**
 
+This file may already exist in the repository. If so, reconcile rather than
+overwrite — in particular the `docs/context/` entry must survive.
+
 ```
+# Private source material (interview notes, recruiter correspondence, job
+# description). Kept locally as background for the case study, never published
+# with the portfolio repo.
+docs/context/
+
 # Python
 __pycache__/
 *.pyc
