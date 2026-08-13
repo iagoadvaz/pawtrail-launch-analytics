@@ -349,7 +349,7 @@ Create `generator/tests/test_generate_subscriptions.py`:
 ```python
 import pandas as pd
 
-from generator.generate_subscriptions import generate_subscriptions
+from generator.generate_subscriptions import LAUNCH_DATE, generate_subscriptions
 
 REFERENCE_STATES = pd.Series({"SP": 0.6, "RJ": 0.3, "MG": 0.1})
 
@@ -382,17 +382,30 @@ def test_same_seed_is_deterministic():
 
 
 def test_adoption_curve_is_not_uniform():
-    """The first week should have materially fewer signups than the middle
-    of the launch window, confirming an S-curve rather than a flat ramp."""
+    """The first week should have materially fewer signups than the middle of
+    the launch window, confirming an S-curve rather than a flat ramp.
+
+    Weeks are measured from the launch date, not from the first observed signup,
+    so this also catches a curve whose sampled range never reaches the start of
+    the window: comparing week 1 against week 9 would pass trivially if week 1
+    were structurally empty.
+    """
     df = generate_subscriptions(
         n_accounts=2000, launch_days=120, seed=42, state_distribution=REFERENCE_STATES
     )
-    days = (df["pawtrail_signup_date"] - df["pawtrail_signup_date"].min()).dt.days
+    # pd.to_datetime is required: the generator emits datetime.date objects, so
+    # the raw column is object dtype and the .dt accessor would raise.
+    days = (pd.to_datetime(df["pawtrail_signup_date"]) - pd.Timestamp(LAUNCH_DATE)).dt.days
 
     first_week = ((days >= 0) & (days < 7)).sum()
     middle_week = ((days >= 56) & (days < 63)).sum()
+    last_week = ((days >= 113) & (days < 120)).sum()
 
-    assert middle_week > first_week
+    # The curve must actually start and finish inside the declared window.
+    assert first_week > 0
+    assert last_week > 0
+    # ...and be S-shaped, not a flat ramp.
+    assert middle_week > 3 * first_week
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -424,14 +437,26 @@ import pandas as pd
 PET_TIERS = ["small", "medium", "large"]
 CHANNELS = ["self_serve", "sales_assisted"]
 
-LAUNCH_DATE = dt.date(2026, 1, 1)
+# Anchored to a Monday so that date_trunc('week', ...) in dbt lands on exactly
+# the same boundary as the weekly marketing-spend buckets. A mid-week launch
+# date silently breaks the spend join in fct_weekly_channel_economics: DuckDB
+# truncates weeks to Monday, so Thursday-anchored spend weeks never match.
+LAUNCH_DATE = dt.date(2026, 1, 5)
 
 
 def _sample_signup_days(n_accounts: int, launch_days: int, rng: np.random.Generator) -> np.ndarray:
-    """Sample signup day-offsets following a logistic (S-curve) adoption curve."""
+    """Sample signup day-offsets following a logistic (S-curve) adoption curve.
+
+    The scale is chosen so the sampled range actually spans the launch window.
+    With u clipped to (0.02, 0.98) the logistic quantile tops out at ~+/-3.89, so
+    a scale of launch_days/8 puts the extremes at roughly day 2 and day 118 of a
+    120-day window. A tighter scale (e.g. launch_days/12) collapses the range to
+    days 21-98, leaving the first and last three weeks of the "launch window"
+    with zero signups.
+    """
     u = rng.uniform(0.02, 0.98, size=n_accounts)
     logistic_x = np.log(u / (1 - u))  # standard logistic quantile
-    scale = launch_days / 12.0
+    scale = launch_days / 8.0
     midpoint = launch_days / 2.0
     days = midpoint + logistic_x * scale
     return np.clip(days, 0, launch_days - 1).astype(int)
@@ -711,12 +736,22 @@ def test_pricing_has_one_row_per_tier_with_positive_margin():
 
 
 def test_marketing_spend_covers_full_launch_window():
-    result = generate_marketing_spend(launch_date=dt.date(2026, 1, 1), launch_days=120, seed=1)
+    result = generate_marketing_spend(launch_date=dt.date(2026, 1, 5), launch_days=120, seed=1)
 
-    assert result["week_start_date"].min() == dt.date(2026, 1, 1)
-    assert (result["week_start_date"].max() - dt.date(2026, 1, 1)).days <= 120
+    assert result["week_start_date"].min() == dt.date(2026, 1, 5)
+    assert (result["week_start_date"].max() - dt.date(2026, 1, 5)).days <= 120
     assert set(result["channel"]) == {"self_serve", "sales_assisted"}
     assert (result["spend_usd"] > 0).all()
+
+
+def test_marketing_spend_weeks_are_monday_aligned():
+    """Spend weeks must start on the same weekday boundary DuckDB's
+    date_trunc('week', ...) produces (Monday), or the CAC join in
+    fct_weekly_channel_economics matches zero rows and every CAC comes out
+    NULL without any test failing."""
+    result = generate_marketing_spend(launch_date=dt.date(2026, 1, 5), launch_days=120, seed=1)
+
+    assert all(d.weekday() == 0 for d in result["week_start_date"])
 
 
 def test_sales_pitches_win_count_matches_sales_assisted_subscriptions():
@@ -778,11 +813,17 @@ def generate_pricing() -> pd.DataFrame:
 
 
 def generate_marketing_spend(launch_date: dt.date, launch_days: int, seed: int) -> pd.DataFrame:
-    """Return weekly marketing spend by channel, ramping over the launch."""
+    """Return weekly marketing spend by channel, ramping over the launch.
+
+    Week starts are snapped back to the Monday of the launch week so they sit on
+    the same boundary DuckDB's date_trunc('week', ...) produces downstream. Without
+    this, the CAC join in fct_weekly_channel_economics matches zero rows.
+    """
     rng = np.random.default_rng(seed)
     n_weeks = launch_days // 7 + 1
     weeks = np.arange(n_weeks)
-    week_start_dates = [launch_date + dt.timedelta(days=int(w * 7)) for w in weeks]
+    first_week_start = launch_date - dt.timedelta(days=launch_date.weekday())
+    week_start_dates = [first_week_start + dt.timedelta(days=int(w * 7)) for w in weeks]
 
     paid_spend = np.clip(500 + weeks * 40 + rng.normal(0, 50, size=n_weeks), 100, None)
     sales_spend = np.clip(1200 + weeks * 20 + rng.normal(0, 80, size=n_weeks), 300, None)
@@ -822,7 +863,7 @@ def generate_sales_pitches(subscriptions: pd.DataFrame, seed: int) -> pd.DataFra
 pytest generator/tests/test_generate_business_data.py -v
 ```
 
-Expected: 4 passed.
+Expected: 5 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1669,10 +1710,11 @@ git commit -m "Add business-data staging and marts (pricing, premium base, spend
 - Modify: `pawtrail_dbt/models/marts/_marts__business.yml` (append new model tests)
 - Create: `pawtrail_dbt/models/marts/fct_weekly_attach.sql`
 - Create: `pawtrail_dbt/tests/assert_attach_rate_within_bounds.sql`
+- Create: `pawtrail_dbt/tests/assert_cumulative_subscriptions_monotonic.sql`
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` (Task 7), `fct_premium_base` (Task 11).
-- Produces: `fct_weekly_attach(state, signup_week, cumulative_subscriptions, eligible_premium_accounts, attach_rate)` — the join between subscriptions and the addressable base is done here in dbt (not in the semantic layer), keeping the attach-rate calculation in one auditable place. Consumed by Task 14's `weekly_attach` semantic model.
+- Produces: `fct_weekly_attach(state, signup_week, new_subscriptions, cumulative_subscriptions, eligible_premium_accounts, attach_rate)` — the join between subscriptions and the addressable base is done here in dbt (not in the semantic layer), keeping the attach-rate calculation in one auditable place. The grain is one row per state per launch week, densified over a state × week spine so cross-state sums are correct in every week. Consumed by Task 14's `weekly_attach` semantic model.
 
 - [ ] **Step 1: Write the singular test before the model exists**
 
@@ -1685,6 +1727,30 @@ Create `pawtrail_dbt/tests/assert_attach_rate_within_bounds.sql`:
 select state, signup_week, attach_rate
 from {{ ref('fct_weekly_attach') }}
 where attach_rate < 0 or attach_rate > 1
+```
+
+Create `pawtrail_dbt/tests/assert_cumulative_subscriptions_monotonic.sql`:
+
+```sql
+-- Fails (returns rows) if cumulative_subscriptions ever drops week over week
+-- within a state. That can only happen if the state x week spine has gaps,
+-- which in turn means any cross-state sum of this measure understates the
+-- national total for the weeks where a state is missing.
+with ordered as (
+    select
+        state,
+        signup_week,
+        cumulative_subscriptions,
+        lag(cumulative_subscriptions) over (
+            partition by state order by signup_week
+        ) as previous_cumulative_subscriptions
+    from {{ ref('fct_weekly_attach') }}
+)
+
+select state, signup_week, cumulative_subscriptions, previous_cumulative_subscriptions
+from ordered
+where previous_cumulative_subscriptions is not null
+  and cumulative_subscriptions < previous_cumulative_subscriptions
 ```
 
 - [ ] **Step 2: Append the schema tests before the model exists**
@@ -1726,24 +1792,53 @@ with weekly_signups as (
     group by 1, 2
 ),
 
+premium_base as (
+    select * from {{ ref('fct_premium_base') }}
+),
+
+week_spine as (
+    select distinct signup_week from weekly_signups
+),
+
+-- Every state must appear in every launch week. Without this spine, a state
+-- with no signups in a given week produces no row at all, so summing
+-- cumulative_subscriptions across states understates the national total for
+-- that week and the cumulative line goes non-monotonic.
+state_week_spine as (
+    select
+        p.state,
+        w.signup_week
+    from premium_base p
+    cross join week_spine w
+),
+
+filled as (
+    select
+        sp.state,
+        sp.signup_week,
+        coalesce(s.new_subscriptions, 0) as new_subscriptions
+    from state_week_spine sp
+    left join weekly_signups s
+        on sp.state = s.state
+       and sp.signup_week = s.signup_week
+),
+
 cumulative as (
     select
         state,
         signup_week,
+        new_subscriptions,
         sum(new_subscriptions) over (
             partition by state order by signup_week
             rows between unbounded preceding and current row
         ) as cumulative_subscriptions
-    from weekly_signups
-),
-
-premium_base as (
-    select * from {{ ref('fct_premium_base') }}
+    from filled
 )
 
 select
     c.state,
     c.signup_week,
+    c.new_subscriptions,
     c.cumulative_subscriptions,
     p.eligible_premium_accounts,
     c.cumulative_subscriptions * 1.0 / nullif(p.eligible_premium_accounts, 0) as attach_rate
@@ -1764,7 +1859,7 @@ Expected: model built, all tests `PASS` (including the singular test).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pawtrail_dbt/models/marts/_marts__business.yml pawtrail_dbt/models/marts/fct_weekly_attach.sql pawtrail_dbt/tests/assert_attach_rate_within_bounds.sql
+git add pawtrail_dbt/models/marts/_marts__business.yml pawtrail_dbt/models/marts/fct_weekly_attach.sql pawtrail_dbt/tests/assert_attach_rate_within_bounds.sql pawtrail_dbt/tests/assert_cumulative_subscriptions_monotonic.sql
 git commit -m "Add fct_weekly_attach mart computing attach rate against the Premium base"
 ```
 
@@ -1791,6 +1886,13 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
         tests:
           - not_null
       - name: new_subscriptions
+        tests:
+          - not_null
+      # Guards the spend join: every grouped row has at least one subscription,
+      # so cac can only be null if fct_marketing_spend failed to join. Without
+      # this test a week-boundary mismatch produces an all-null CAC chart and
+      # still builds green.
+      - name: cac
         tests:
           - not_null
 ```
@@ -1836,8 +1938,11 @@ weekly_subs as (
     group by 1, 2
 ),
 
+-- date_trunc is defensive here: the generator already emits Monday-aligned week
+-- starts, so this is a no-op on correct data. It keeps the join below from
+-- silently matching zero rows if the launch date ever moves off a Monday.
 spend as (
-    select channel, week_start_date as signup_week, spend_usd
+    select channel, date_trunc('week', week_start_date) as signup_week, spend_usd
     from {{ ref('fct_marketing_spend') }}
 ),
 
@@ -2001,12 +2106,20 @@ semantic_models:
         type: time
         type_params:
           time_granularity: week
+    # Both measures are semi-additive: they sum correctly ACROSS states within a
+    # week, but not across weeks (cumulative_subscriptions would double-count and
+    # eligible_premium_accounts would be multiplied by the number of weeks).
+    # attach_rate is therefore only valid grouped by signup_week, or by
+    # signup_week AND state. Never query it grouped by state alone.
+    # `agg: max` was wrong here: grouped by week it silently returns the largest
+    # state's cumulative over the largest state's base — i.e. SP's attach rate
+    # mislabelled as the national trend.
     measures:
       - name: cumulative_subscriptions
-        agg: max
+        agg: sum
         expr: cumulative_subscriptions
       - name: eligible_premium_accounts
-        agg: max
+        agg: sum
         expr: eligible_premium_accounts
 
   - name: weekly_channel_economics
@@ -2055,6 +2168,11 @@ semantic_models:
 
 ```bash
 cd pawtrail_dbt
+# `mf` has no --profiles-dir flag: it resolves profiles via DBT_PROFILES_DIR,
+# falling back to ~/.dbt/profiles.yml. Since this project keeps profiles.yml
+# inside pawtrail_dbt/, every mf command needs this exported first or it fails
+# with a missing-profile error.
+export DBT_PROFILES_DIR="$PWD"
 dbt parse --profiles-dir .
 mf validate-configs
 cd ..
@@ -2172,6 +2290,7 @@ metrics:
 
 ```bash
 cd pawtrail_dbt
+export DBT_PROFILES_DIR="$PWD"
 dbt parse --profiles-dir .
 mf validate-configs
 mf list metrics
@@ -2184,6 +2303,7 @@ Expected: `mf list metrics` shows all 12 metrics defined above.
 
 ```bash
 cd pawtrail_dbt
+export DBT_PROFILES_DIR="$PWD"
 mf query --metrics activation_rate_30d --group-by metric_time__week
 mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state
 cd ..
@@ -2195,6 +2315,7 @@ Expected: the second query shows the problem state configured in `generator/buil
 
 ```bash
 cd pawtrail_dbt
+export DBT_PROFILES_DIR="$PWD"
 mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
 mf query --metrics attach_rate --group-by weekly_attach__signup_week --csv ../dashboard/control_attach_rate.csv
 mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
@@ -2260,6 +2381,16 @@ Built from the semantic-layer metric exports in this directory
 2. Activation — 7/14/30-day activation rates over time
 3. Kit operations — on-time delivery rate by state
 4. Acquisition efficiency — CAC and cost per activated account by channel
+
+## Data freshness
+
+This dashboard is a static snapshot of a simulated 0–120 day launch window,
+not a live-refreshing operational dashboard. It was built from a one-time
+export of the `control_*.csv` files in this directory; Tableau Public does
+not support live connections to the local DuckDB warehouse. If the
+generator, seed, or dbt models change after publishing, the CSVs and
+published workbook must be regenerated and re-published manually (see
+Task 20, Step 5 for the drift check).
 ```
 
 - [ ] **Step 5: Commit**
@@ -2342,6 +2473,9 @@ dbt seed --profiles-dir .
 dbt build --profiles-dir .
 
 # 4. Query the semantic layer
+# `mf` reads DBT_PROFILES_DIR (it has no --profiles-dir flag), and this
+# project keeps profiles.yml inside pawtrail_dbt/ rather than ~/.dbt/.
+export DBT_PROFILES_DIR="$PWD"
 mf validate-configs
 mf list metrics
 mf query --metrics activation_rate_30d --group-by metric_time__week
@@ -2480,6 +2614,7 @@ Expected: all seeds load, all models build, all tests (schema + singular) pass w
 
 ```bash
 cd pawtrail_dbt
+export DBT_PROFILES_DIR="$PWD"
 mf validate-configs
 mf query --metrics activation_rate_30d,kit_on_time_delivery_rate --group-by metric_time__week
 cd ..
