@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: fct_at_risk_accounts
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+      - name: pet_tier
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['small', 'medium', 'large']
+      - name: risk_driver
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['healthy', 'digital_failure', 'physical_failure', 'both_legs_failed', 'onboarding_gap']
+      - name: is_at_risk
+        tests:
+          - not_null
