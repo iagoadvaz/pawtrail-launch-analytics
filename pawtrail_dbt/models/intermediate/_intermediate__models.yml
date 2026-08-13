@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: int_activation_funnel
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+      - name: digital_activated_7d
+        tests:
+          - not_null
+      - name: kit_activated_sla
+        tests:
+          - not_null
+      - name: combined_activated_30d
+        tests:
+          - not_null
+      - name: days_observed
+        tests:
+          - not_null
+      - name: is_mature_30d
+        tests:
+          - not_null
