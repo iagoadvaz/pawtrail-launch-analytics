@@ -3747,12 +3747,17 @@ cd ..
 Expected, and all four must hold:
 
 1. `kit_on_time_delivery_rate` sorted ascending puts the configured
-   `PROBLEM_STATE` (default `"OH"`) **first**, at roughly 55-60% against a
-   baseline near 88%. Because Task 2 truncates the region list to the top 12
-   and renormalises, there is no long tail of one-or-two-account states whose
-   meaningless 0% or 100% rate could outrank the real signal — the earlier
-   untruncated Olist distribution reached ~0.05% share, which at 3000 accounts
-   is one or two rows.
+   `PROBLEM_STATE` (default `"OH"`) **first**, materially worse than every
+   other state (verified: ~51% against a baseline of 83-91% elsewhere — a
+   bit below the ~55-60% estimated in Task 4/6, because those calibration
+   checks measured on-time rate without excluding lost kits from
+   `kits_shipped`/`kits_on_time` the way the semantic layer's maturity-gated
+   measures correctly do; the gap to every other state is unambiguous either
+   way, so this is not a regression to chase). Because Task 2 truncates the
+   region list to the top 12 and renormalises, there is no long tail of
+   one-or-two-account states whose meaningless 0% or 100% rate could outrank
+   the real signal — the earlier untruncated Olist distribution reached
+   ~0.05% share, which at 3000 accounts is one or two rows.
 2. The same region is also worst on `activation_rate_30d`, because the North
    Star requires an **on-time** kit (Task 8). If activation looks flat across
    regions while delivery does not, the North Star has silently reverted to the
