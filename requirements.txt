@@ -1,5 +1,12 @@
-dbt-core>=1.8
+# dbt-core is capped below 1.12 because the latest dbt-metricflow release
+# (0.13.0 at time of writing) pins dbt-core<1.12.0,>=1.10.4. Without the
+# upper bound here, pip resolves dbt-core to the newest release (which has
+# outpaced dbt-metricflow's pin) and the two packages become uninstallable
+# together. Verified by installing this exact file with pip; re-check the
+# bound if a future dbt-metricflow release moves its own dbt-core pin.
+dbt-core>=1.8,<1.12.0
 dbt-duckdb>=1.8
+dbt-metricflow>=0.6
 pandas>=2.2
 numpy>=1.26
 pytest>=8.0
