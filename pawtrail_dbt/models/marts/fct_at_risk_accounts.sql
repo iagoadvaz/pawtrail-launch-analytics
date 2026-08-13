@@ -22,6 +22,20 @@ flagged as (
 
 select
     *,
+    -- onboarding_gap ("logged in fine, but did no first-cycle tasks") is
+    -- expected to be rare-to-empty at this project's scale, not dead code.
+    -- Task 4's generator (generate_activity.py, generate_digital_engagement)
+    -- draws task_rate = clip(1 - days_to_first_login/30, 0.05, 1.0): the 0.05
+    -- floor is only reached as days_to_first_login approaches 30, but
+    -- no_digital_access_14d already excludes anyone past day 14 -- so the
+    -- window where an account both "has digital access" and "was likely to
+    -- draw zero tasks" barely overlaps. On a run with zero occurrences, that
+    -- is a real ~86.5% per-seed outcome (Poisson, expected count ~0.145 among
+    -- accounts with confirmed on-time digital + kit), not a bug in this case
+    -- branch. Do not "fix" an empty bucket here by editing this condition,
+    -- and do not add a non-degeneracy test asserting this branch is
+    -- populated -- it would fail on most re-seeds. See task-13b-report.md
+    -- correction for the full calculation.
     case
         when no_digital_access_14d and kit_failed_sla then 'both_legs_failed'
         when kit_failed_sla then 'physical_failure'
