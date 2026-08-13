@@ -1,0 +1,4 @@
+pet_tier,monthly_price_usd,kit_cogs_usd,shipping_cost_usd
+small,19.99,7.0,3.5
+medium,29.99,10.0,4.5
+large,39.99,13.0,5.5
