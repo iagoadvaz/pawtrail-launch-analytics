@@ -64,3 +64,26 @@ models:
       - name: attach_rate
         tests:
           - not_null
+
+  - name: fct_weekly_channel_economics
+    columns:
+      - name: channel_week_key
+        tests:
+          - unique
+          - not_null
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+      - name: new_subscriptions
+        tests:
+          - not_null
+      # Guards the spend join: every grouped row has at least one subscription,
+      # so cac can only be null if fct_marketing_spend failed to join. Without
+      # this test a week-boundary mismatch produces an all-null CAC chart and
+      # still builds green.
+      - name: cac
+        tests:
+          - not_null
