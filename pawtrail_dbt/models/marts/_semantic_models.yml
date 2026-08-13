@@ -14,7 +14,7 @@ semantic_models:
         type: categorical
       # Completes spec §6's segmentation set (state, pet tier, channel, Premium
       # tenure before attach). The banded column is exposed rather than the raw
-      # day count so `--group-by accounts__premium_tenure_band` returns four
+      # day count so `--group-by account__premium_tenure_band` returns four
       # comparable cohorts instead of one row per distinct tenure value.
       - name: premium_tenure_band
         type: categorical
@@ -165,9 +165,9 @@ semantic_models:
           time_granularity: day
       # No local `state` dimension: `accounts` already owns it under the same
       # `account` primary entity (see the note above `activation_events`).
-      # Query kit-delivery metrics grouped by `accounts__state`, not
-      # `kit_deliveries__state` — same values (`fct_kit_deliveries.state` is
-      # itself sourced from `dim_accounts` via a join in Task 10), one owner.
+      # Query kit-delivery metrics grouped by `account__state` — same values
+      # (`fct_kit_deliveries.state` is itself sourced from `dim_accounts` via
+      # a join in Task 10), one owner, reached through the shared entity.
     measures:
       # `kits_shipped` counts every account with a kit obligation, including
       # lost ones. The earlier name `kits_delivered` was misleading: it was used
@@ -306,10 +306,10 @@ semantic_models:
         type_params:
           time_granularity: day
       # No local `state`/`channel`: `accounts` already owns both under the
-      # same `account` primary entity. Group by `accounts__state` /
-      # `accounts__channel` instead if a by-state or by-channel cut of the
+      # same `account` primary entity. Group by `account__state` /
+      # `account__channel` instead if a by-state or by-channel cut of the
       # at-risk queue is ever needed — this plan's own queries only ever
-      # group this model by `risk_driver`.
+      # group this model by `account__risk_driver`.
       - name: risk_driver
         type: categorical
     measures:
