@@ -1,0 +1,237 @@
+metrics:
+  - name: weekly_new_subscriptions
+    type: simple
+    label: "Weekly New Subscriptions"
+    type_params:
+      measure: subscription_count
+
+  - name: eligible_premium_accounts
+    type: simple
+    label: "Eligible Premium Accounts (addressable universe)"
+    type_params:
+      measure: eligible_premium_accounts
+
+  - name: attach_rate
+    type: ratio
+    label: "Attach Rate (Premium to PawTrail)"
+    type_params:
+      numerator: cumulative_subscriptions
+      denominator: eligible_premium_accounts
+
+  # Attach rate against the launch target (spec §6). Expressed as a ratio to
+  # target so 1.0 means "on plan" and the dashboard needs no separate reference
+  # line that could drift from the number in the memo.
+  - name: attach_rate_vs_target
+    type: derived
+    label: "Attach Rate vs. Launch Target"
+    type_params:
+      expr: rate / {{ var('attach_rate_launch_target') }}
+      metrics:
+        - name: attach_rate
+          alias: rate
+
+  - name: task_completion_rate
+    type: ratio
+    label: "First-Cycle Task Completion Rate"
+    type_params:
+      numerator: tasks_completed
+      denominator: tasks_available
+
+  - name: task_engagement_rate
+    type: ratio
+    label: "Accounts Completing At Least One First-Cycle Task"
+    type_params:
+      numerator: task_engaged_accounts
+      denominator: mature_accounts_30d
+
+  # Every activation rate divides by its matching *mature* cohort, not by all
+  # accounts. See Task 8: an account that has not yet had the full window has
+  # not failed, and counting it as a failure understates activation in exactly
+  # the most recent weeks.
+  - name: digital_activation_rate_7d
+    type: ratio
+    label: "Digital Activation Rate (7d, mature cohort)"
+    type_params:
+      numerator: digitally_activated_accounts
+      denominator: mature_accounts_7d
+
+  - name: kit_sla_rate
+    type: ratio
+    label: "Kit SLA Activation Rate (mature cohort)"
+    type_params:
+      numerator: kit_activated_accounts
+      denominator: mature_accounts_sla
+
+  # Spec §6 asks for combined activation at 7/14/30 days. Only the digital leg's
+  # window shortens across the three; the physical leg stays "hit the SLA" at
+  # every horizon. Each divides by its own maturity cohort — see Task 8 for why
+  # the 7-day version is gated on the SLA rather than on 7 days.
+  - name: activation_rate_7d
+    type: ratio
+    label: "Combined 7-Day Activation Rate (mature cohort)"
+    type_params:
+      numerator: combined_activated_accounts_7d
+      denominator: mature_accounts_combined_7d
+
+  - name: activation_rate_14d
+    type: ratio
+    label: "Combined 14-Day Activation Rate (mature cohort)"
+    type_params:
+      numerator: combined_activated_accounts_14d
+      denominator: mature_accounts_combined_14d
+
+  - name: activation_rate_30d
+    type: ratio
+    label: "Combined 30-Day Activation Rate (mature cohort)"
+    type_params:
+      numerator: combined_activated_accounts_30d
+      denominator: mature_accounts_30d
+
+  - name: avg_days_to_first_login
+    type: simple
+    label: "Avg Days to First Digital Access"
+    type_params:
+      measure: avg_days_to_first_login
+
+  - name: avg_days_to_kit_delivery
+    type: simple
+    label: "Avg Days to First Kit Delivered"
+    type_params:
+      measure: avg_days_to_kit_delivery
+
+  - name: conversion_lag_days
+    type: simple
+    label: "Avg Conversion Lag (Premium to PawTrail, days)"
+    type_params:
+      measure: avg_conversion_lag_days
+
+  # Week-over-week growth of new subscriptions (spec §6, adoption curve shape).
+  # Derived from the same measure at a one-week offset, so the shape and the
+  # level can never disagree.
+  - name: wow_subscription_growth
+    type: derived
+    label: "Week-over-Week Subscription Growth"
+    type_params:
+      expr: (current_week - prior_week) / nullif(prior_week, 0)
+      metrics:
+        - name: weekly_new_subscriptions
+          alias: current_week
+        - name: weekly_new_subscriptions
+          offset_window: 1 week
+          alias: prior_week
+
+  - name: zero_digital_access_accounts
+    type: simple
+    label: "Accounts With No Digital Access in 14 Days"
+    type_params:
+      measure: zero_digital_access_accounts
+
+  - name: zero_task_accounts
+    type: simple
+    label: "Accounts With Zero Completed Tasks in the First Cycle"
+    type_params:
+      measure: zero_task_accounts
+
+  - name: avg_delivery_delay_days
+    type: simple
+    label: "Avg Days Late (late kits only)"
+    type_params:
+      measure: avg_days_late
+
+  - name: kit_late_rate
+    type: ratio
+    label: "Kit Late Rate"
+    type_params:
+      numerator: kits_late
+      denominator: kits_shipped
+
+  - name: incremental_mrr
+    type: simple
+    label: "Incremental MRR Added by Attach"
+    type_params:
+      measure: mrr_added_usd
+
+  - name: arpa
+    type: ratio
+    label: "ARPA (average revenue per account)"
+    type_params:
+      numerator: mrr_added_usd
+      denominator: channel_new_subscriptions
+
+  - name: cac_payback_months
+    type: simple
+    label: "Estimated CAC Payback (months)"
+    type_params:
+      measure: avg_cac_payback_months
+
+  - name: mature_cohort_size_30d
+    type: simple
+    label: "Accounts With a Full 30-Day Window"
+    type_params:
+      measure: mature_accounts_30d
+
+  - name: kit_on_time_delivery_rate
+    type: ratio
+    label: "Kit On-Time Delivery Rate"
+    type_params:
+      numerator: kits_on_time
+      denominator: kits_shipped
+
+  - name: kit_lost_rate
+    type: ratio
+    label: "Kit Lost Rate"
+    type_params:
+      numerator: kits_lost
+      denominator: kits_shipped
+
+  - name: at_risk_account_rate
+    type: ratio
+    label: "At-Risk Account Rate"
+    type_params:
+      numerator: at_risk_accounts_count
+      denominator: assessable_accounts
+
+  - name: at_risk_accounts
+    type: simple
+    label: "At-Risk Accounts (CS queue size)"
+    type_params:
+      measure: at_risk_accounts_count
+
+  - name: cumulative_subscriptions_to_date
+    type: simple
+    label: "Cumulative Subscriptions to Date"
+    type_params:
+      measure: cumulative_subscriptions
+
+  - name: win_rate
+    type: ratio
+    label: "Sales-Assisted Win Rate"
+    type_params:
+      numerator: pitches_won
+      denominator: pitches_total
+
+  - name: cac_by_channel
+    type: ratio
+    label: "CAC by Channel"
+    type_params:
+      numerator: channel_spend_usd
+      denominator: channel_new_subscriptions
+
+  - name: cost_per_activated_account
+    type: ratio
+    label: "Cost per Activated Account"
+    type_params:
+      numerator: channel_spend_usd
+      denominator: channel_activated_subscriptions
+
+  - name: channel_spend
+    type: simple
+    label: "Marketing/Sales Spend"
+    type_params:
+      measure: channel_spend_usd
+
+  - name: contribution_margin_per_subscription
+    type: simple
+    label: "Contribution Margin per Subscription"
+    type_params:
+      measure: avg_contribution_margin

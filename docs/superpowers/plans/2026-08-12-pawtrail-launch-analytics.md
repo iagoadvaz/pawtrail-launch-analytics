@@ -3017,6 +3017,18 @@ entity: `weekly_attach`'s dimensions are `weekly_attach_row__state` /
 `sales_pitches`'s are `pitch__state`. `metric_time__week` is unaffected — it
 is MetricFlow's own universal alias, not an entity-qualified name.
 
+**Note on `create_metric: true` below:** this project's pinned dbt-core
+(1.11.13) resolves a `ratio` metric's `numerator`/`denominator` as references
+to other *metrics*, not to bare measures — `dbt parse` fails with "The metric
+`X` does not exist" if a `ratio` metric in Task 15's `_metrics.yml` points at
+a measure with no same-named metric. `create_metric: true` on a measure
+auto-registers a same-named simple proxy metric so Task 15's ratio metrics
+resolve. Verified empirically (this surfaced during Task 15, not from reading
+the YAML). It is added only on measures that Task 15's `_metrics.yml` uses as
+a ratio/derived numerator or denominator AND that have no metric of the exact
+same name already declared there (e.g. `eligible_premium_accounts` needs no
+flag, since a `simple` metric of that exact name already exists).
+
 ```yaml
 semantic_models:
   - name: accounts
@@ -3088,15 +3100,27 @@ semantic_models:
     # the North Star down hardest in the most recent weeks, which are exactly
     # the weeks a launch dashboard is read for.
     measures:
+      # `create_metric: true` on the measures below: MetricFlow/dbt-core (this
+      # project's pinned dbt-core 1.11.13) resolves a `ratio` metric's
+      # numerator/denominator as references to other *metrics*, not to bare
+      # measures — `dbt parse` fails with "The metric `X` does not exist" if a
+      # ratio in _metrics.yml points at a measure with no same-named metric.
+      # `create_metric: true` auto-registers a same-named simple proxy metric
+      # for the measure so those ratio metrics resolve. Verified empirically
+      # via `dbt parse` (Task 15); only added where no metric of the same name
+      # already exists in _metrics.yml.
       - name: mature_accounts_7d
         agg: sum
         expr: case when is_mature_7d then 1 else 0 end
+        create_metric: true
       - name: mature_accounts_sla
         agg: sum
         expr: case when is_mature_sla then 1 else 0 end
+        create_metric: true
       - name: mature_accounts_30d
         agg: sum
         expr: case when is_mature_30d then 1 else 0 end
+        create_metric: true
       # Combined rates use their own maturity flags, which are the later of the
       # digital window and the kit SLA. Pairing combined_activated_7d with
       # mature_accounts_7d instead would count accounts whose SLA window is still
@@ -3104,24 +3128,31 @@ semantic_models:
       - name: mature_accounts_combined_7d
         agg: sum
         expr: case when is_mature_combined_7d then 1 else 0 end
+        create_metric: true
       - name: mature_accounts_combined_14d
         agg: sum
         expr: case when is_mature_combined_14d then 1 else 0 end
+        create_metric: true
       - name: digitally_activated_accounts
         agg: sum
         expr: case when digital_activated_7d and is_mature_7d then 1 else 0 end
+        create_metric: true
       - name: kit_activated_accounts
         agg: sum
         expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
+        create_metric: true
       - name: combined_activated_accounts_7d
         agg: sum
         expr: case when combined_activated_7d and is_mature_combined_7d then 1 else 0 end
+        create_metric: true
       - name: combined_activated_accounts_14d
         agg: sum
         expr: case when combined_activated_14d and is_mature_combined_14d then 1 else 0 end
+        create_metric: true
       - name: combined_activated_accounts_30d
         agg: sum
         expr: case when combined_activated_30d and is_mature_30d then 1 else 0 end
+        create_metric: true
       # Early risk counts (spec §6). Both are restricted to accounts old enough
       # to be judged, for the same reason the activation rates are.
       - name: zero_digital_access_accounts
@@ -3152,16 +3183,19 @@ semantic_models:
         expr: >-
           case when is_mature_30d
                then coalesce(care_tasks_completed_first_cycle, 0) else 0 end
+        create_metric: true
       - name: tasks_available
         agg: sum
         expr: >-
           case when is_mature_30d
                then {{ var('first_cycle_task_count') }} else 0 end
+        create_metric: true
       - name: task_engaged_accounts
         agg: sum
         expr: >-
           case when coalesce(care_tasks_completed_first_cycle, 0) >= 1
                and is_mature_30d then 1 else 0 end
+        create_metric: true
 
   - name: kit_deliveries
     model: ref('fct_kit_deliveries')
@@ -3197,12 +3231,15 @@ semantic_models:
       - name: kits_shipped
         agg: sum
         expr: case when is_mature_sla then 1 else 0 end
+        create_metric: true
       - name: kits_on_time
         agg: sum
         expr: case when kit_activated_sla and is_mature_sla then 1 else 0 end
+        create_metric: true
       - name: kits_lost
         agg: sum
         expr: case when kit_lost and is_mature_sla then 1 else 0 end
+        create_metric: true
       # Delay distribution (spec §6, kit operations). days_late is null for
       # on-time and lost kits, and `average` skips nulls, so this answers "when
       # a kit is late, how late" rather than diluting the figure with the
@@ -3213,6 +3250,7 @@ semantic_models:
       - name: kits_late
         agg: sum
         expr: case when days_late is not null and is_mature_sla then 1 else 0 end
+        create_metric: true
 
   - name: weekly_attach
     model: ref('fct_weekly_attach')
@@ -3241,9 +3279,15 @@ semantic_models:
     # state's cumulative over the largest state's base — i.e. SP's attach rate
     # mislabelled as the national trend.
     measures:
+      # `create_metric: true` on cumulative_subscriptions only: attach_rate's
+      # numerator references this measure directly and no metric of the same
+      # name exists (see the note above activation_events' measures).
+      # eligible_premium_accounts needs no flag — a simple metric already
+      # shares its exact name.
       - name: cumulative_subscriptions
         agg: sum
         expr: cumulative_subscriptions
+        create_metric: true
       - name: eligible_premium_accounts
         agg: sum
         expr: eligible_premium_accounts
@@ -3269,12 +3313,15 @@ semantic_models:
       - name: channel_new_subscriptions
         agg: sum
         expr: new_subscriptions
+        create_metric: true
       - name: channel_activated_subscriptions
         agg: sum
         expr: activated_subscriptions
+        create_metric: true
       - name: channel_spend_usd
         agg: sum
         expr: spend_usd
+        create_metric: true
       - name: avg_contribution_margin
         agg: average
         expr: contribution_margin_per_subscription
@@ -3283,6 +3330,7 @@ semantic_models:
       - name: mrr_added_usd
         agg: sum
         expr: mrr_usd
+        create_metric: true
       - name: avg_cac_payback_months
         agg: average
         expr: cac_payback_months
@@ -3306,9 +3354,11 @@ semantic_models:
       - name: pitches_total
         agg: count
         expr: pitch_id
+        create_metric: true
       - name: pitches_won
         agg: sum
         expr: case when won then 1 else 0 end
+        create_metric: true
 
   - name: at_risk_accounts
     model: ref('fct_at_risk_accounts')
@@ -3336,9 +3386,11 @@ semantic_models:
       - name: assessable_accounts
         agg: count
         expr: account_id
+        create_metric: true
       - name: at_risk_accounts_count
         agg: sum
         expr: case when is_at_risk then 1 else 0 end
+        create_metric: true
 ```
 
 - [ ] **Step 2: Validate the semantic models**
@@ -3645,25 +3697,40 @@ export DBT_PROFILES_DIR="$PWD"
 dbt parse --profiles-dir .
 mf validate-configs
 
-# Compare what the YAML declares against what MetricFlow actually registered,
-# rather than against a number written down here. A hardcoded count silently
-# goes stale the next time a metric is added, and a stale count is worse than
-# no count: it fails a green build and sends whoever is executing this plan
-# looking for a metric that was never missing.
-expected=$(grep -c '^  - name:' models/marts/_metrics.yml)
-actual=$(mf list metrics | grep -c '^ *- ')
-if [ "$expected" = "$actual" ]; then
-  echo "OK: $actual metrics registered"
-else
-  echo "MISMATCH: yml declares $expected, mf registered $actual"
+# Confirm every metric this YAML declares actually registered, by name —
+# rather than comparing total counts. A total-count comparison looked
+# appealing (one number, easy to derive) but breaks two ways in practice,
+# both only discoverable by actually running `mf`: `mf list metrics` prints
+# each entry with a Unicode bullet ("• name: ...", not "- name: ..."), so a
+# literal `-`-based grep against its output always returns zero regardless of
+# what's registered; and every measure marked `create_metric: true` in Task
+# 14 (needed so ratio metrics can reference it) registers its own extra
+# proxy metric, so the total registered count is intentionally larger than
+# the count declared here — a real, by-design gap, not a bug to chase. A
+# per-name coverage check sidesteps both: it's insensitive to the bullet
+# character and to how many extra proxy metrics exist, and it still catches
+# the failure this check exists for (a metric that parsed but never
+# registered — usually a measure referenced by a `type_params` block that
+# doesn't exist on any semantic model).
+mf list metrics > /tmp/pawtrail_registered_metrics.txt
+missing=0
+for name in $(grep -oP '^  - name: \K.*' models/marts/_metrics.yml); do
+  if ! grep -q "^• ${name}:" /tmp/pawtrail_registered_metrics.txt; then
+    echo "MISSING: $name"
+    missing=1
+  fi
+done
+if [ "$missing" = "0" ]; then
+  n=$(grep -c '^  - name:' models/marts/_metrics.yml)
+  echo "OK: all $n declared metrics registered"
 fi
 cd ..
 ```
 
-Expected: `OK: <n> metrics registered`, where `<n>` matches the metrics defined
-in Step 1. A mismatch means a metric parsed but failed to register — usually a
-measure referenced by a `type_params` block that does not exist on any semantic
-model.
+Expected: `OK: all <n> declared metrics registered`, where `<n>` matches the
+metrics defined in Step 1. Any `MISSING:` line means that metric parsed but
+failed to register — usually a measure referenced by a `type_params` block
+that does not exist on any semantic model.
 
 - [ ] **Step 3: Run the acceptance query — confirm the injected problem segment is actually surfaced**
 
@@ -3695,11 +3762,19 @@ Expected, and all four must hold:
 4. The tenure query returns **all four bands**, none of them empty. This checks
    that the segmentation is non-degenerate, and it is the only tenure assertion
    the generator actually guarantees: Task 3 makes tenure decay across the launch
-   window, so longer-tenured accounts signed up earlier and the `731+` band
-   should hold the largest mature cohort. Do **not** assert that activation
-   differs by tenure — activation is driven by kit SLA and login behaviour, which
-   Task 4 generates independently of tenure, so a flat activation profile across
-   bands is the correct result rather than a bug.
+   window, so longer-tenured accounts signed up earlier, and within the `731+`
+   band a higher *fraction* of accounts should already be 30-day-mature than in
+   `366-730`. Do not assert that `731+` holds the largest mature *cohort in
+   absolute terms* — `366-730` is a much bigger band overall (Task 9's own
+   generated distribution: `366-730` is roughly 1.8x `731+`'s population), so
+   even at a lower maturity rate it can still contribute more mature accounts in
+   absolute count. Rate and raw count diverge here for the same reason they did
+   in Task 8's mutation-test review (CA's raw count vs. OH's rate) — check the
+   rate within each band if that comparison matters, not the raw count across
+   bands. Do **not** assert that activation differs by tenure — activation is
+   driven by kit SLA and login behaviour, which Task 4 generates independently
+   of tenure, so a flat activation profile across bands is the correct result
+   rather than a bug.
 
 This is the concrete proof, called for in spec §8, that the semantic layer
 surfaces a real root-cause signal rather than just displaying numbers.
