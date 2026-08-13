@@ -2919,15 +2919,103 @@ git commit -m "Add at-risk account queue tagged by failure driver"
 **Skill:** metricflow-semantic-layer
 
 **Files:**
+- Create: `pawtrail_dbt/models/metricflow_time_spine.sql`
+- Create: `pawtrail_dbt/models/_metricflow_time_spine.yml`
 - Create: `pawtrail_dbt/models/marts/_semantic_models.yml`
 
 **Interfaces:**
 - Consumes: `dim_accounts`, `fct_subscriptions`, `fct_activation_events`, `fct_kit_deliveries`, `fct_weekly_attach`, `fct_weekly_channel_economics`, `fct_sales_pitches` (Tasks 9–13), `fct_at_risk_accounts` (Task 13b).
 - Produces: eight MetricFlow semantic models (`accounts`, `subscriptions`, `activation_events`, `kit_deliveries`, `weekly_attach`, `weekly_channel_economics`, `sales_pitches`, `at_risk_accounts`) whose measures are consumed by Task 15's metric definitions.
 
+- [ ] **Step 0: Create the time spine model**
+
+`dbt parse` requires a time spine model (granularity DAY or smaller) as soon
+as any semantic model exists in the project — a hard dbt-core requirement,
+unconditional on the semantic models' own content. No earlier task creates
+one. Built with DuckDB's native `generate_series` rather than
+`dbt_utils.date_spine` since the project has no `dbt_utils` dependency.
+
+Create `pawtrail_dbt/models/metricflow_time_spine.sql`:
+
+```sql
+-- Required scaffolding for the dbt Semantic Layer: `dbt parse` refuses to
+-- parse any project that declares semantic models unless a day-grain (or
+-- finer) time spine model exists (see
+-- https://docs.getdbt.com/docs/build/metricflow-time-spine). This project has
+-- no dbt_utils dependency, so the spine is built with DuckDB's native
+-- generate_series rather than dbt_utils.date_spine. The range comfortably
+-- brackets the launch window (LAUNCH_DATE = 2026-01-05, observed signup dates
+-- run 2026-01-06 through 2026-05-03) with slack on both sides for metrics
+-- using `offset_window`.
+{{
+    config(
+        materialized = 'table',
+    )
+}}
+
+select
+    cast(generate_series as date) as date_day
+from generate_series(cast('2020-01-01' as date), cast('2030-12-31' as date), interval 1 day)
+```
+
+Create `pawtrail_dbt/models/_metricflow_time_spine.yml`:
+
+```yaml
+models:
+  - name: metricflow_time_spine
+    description: >
+      Day-grain time spine required by the dbt Semantic Layer. Not part of any
+      task brief's file list; added because `dbt parse` hard-fails as soon as
+      any `_semantic_models.yml` exists in the project without one. See the
+      model's own header comment for why generate_series is used instead of
+      dbt_utils.date_spine.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+```
+
+```bash
+cd pawtrail_dbt
+dbt run --select metricflow_time_spine --profiles-dir .
+cd ..
+```
+
+Expected: model builds. This range comfortably brackets the launch window
+(`LAUNCH_DATE = 2026-01-05`, 120-day window) with no semantic content of its
+own — pure boilerplate.
+
 - [ ] **Step 1: Create the semantic models file**
 
 Create `pawtrail_dbt/models/marts/_semantic_models.yml`:
+
+**Note on entity/dimension naming below:** MetricFlow's `PrimaryEntityDimensionPairs`
+validation rule forbids the same `(primary_entity, dimension_name)` pair from
+being declared on more than one semantic model in the whole project — the
+first declaration wins and every later one is a hard `mf validate-configs`
+error. Five of the eight models below share `account` as their primary
+entity. `subscriptions` is the canonical owner of the bare `signup_date`
+name (declared first); `activation_events`, `kit_deliveries`, and
+`at_risk_accounts` each need their own uniquely-named local time dimension
+instead (still `expr: pawtrail_signup_date`) — a model can't borrow another
+model's time dimension for its own `agg_time_dimension`. `accounts` is the
+canonical owner of `state` and `channel`; `kit_deliveries` and
+`at_risk_accounts` don't redeclare them — any metric built on those models
+can still be grouped by them, so nothing is lost, only de-duplicated.
+**Group-by addressing note:** MetricFlow addresses every dimension by the
+name of the *entity* used to reach it, never by the semantic model's own
+`name:` field — confirmed empirically (`mf query`), not assumed. Every
+account-primary model's dimensions are therefore reached as `account__state`,
+`account__channel`, `account__risk_driver`, etc. (singular — the entity
+name), not `accounts__state` (plural — the model name, which is not a valid
+group-by prefix at all since `accounts` has no measures of its own). The
+same applies to every semantic model below with a distinctly-named primary
+entity: `weekly_attach`'s dimensions are `weekly_attach_row__state` /
+`weekly_attach_row__signup_week`, `weekly_channel_economics`'s are
+`channel_week_row__channel` / `channel_week_row__signup_week`, and
+`sales_pitches`'s are `pitch__state`. `metric_time__week` is unaffected — it
+is MetricFlow's own universal alias, not an entity-qualified name.
 
 ```yaml
 semantic_models:
@@ -2946,7 +3034,7 @@ semantic_models:
         type: categorical
       # Completes spec §6's segmentation set (state, pet tier, channel, Premium
       # tenure before attach). The banded column is exposed rather than the raw
-      # day count so `--group-by accounts__premium_tenure_band` returns four
+      # day count so `--group-by account__premium_tenure_band` returns four
       # comparable cohorts instead of one row per distinct tenure value.
       - name: premium_tenure_band
         type: categorical
@@ -2977,13 +3065,19 @@ semantic_models:
   - name: activation_events
     model: ref('fct_activation_events')
     defaults:
-      agg_time_dimension: signup_date
+      agg_time_dimension: activation_signup_date
     entities:
       - name: account
         type: primary
         expr: account_id
     dimensions:
-      - name: signup_date
+      # Named uniquely per model rather than `signup_date`: MetricFlow forbids
+      # the same (primary entity, dimension name) pair on more than one
+      # semantic model, and `subscriptions` already owns the bare name. Every
+      # query in this plan reaches time via the universal `metric_time`
+      # alias, never this model-qualified name directly, so the rename has no
+      # downstream impact.
+      - name: activation_signup_date
         type: time
         expr: pawtrail_signup_date
         type_params:
@@ -3076,19 +3170,24 @@ semantic_models:
     # delivery date is null for lost kits, which are exactly the rows the lost
     # rate must not drop.
     defaults:
-      agg_time_dimension: signup_date
+      agg_time_dimension: kit_signup_date
     entities:
       - name: account
         type: primary
         expr: account_id
     dimensions:
-      - name: signup_date
+      # Named uniquely per model (see the note above `activation_events`) —
+      # `subscriptions` owns the bare `signup_date` name.
+      - name: kit_signup_date
         type: time
         expr: pawtrail_signup_date
         type_params:
           time_granularity: day
-      - name: state
-        type: categorical
+      # No local `state` dimension: `accounts` already owns it under the same
+      # `account` primary entity (see the note above `activation_events`).
+      # Query kit-delivery metrics grouped by `account__state` — same values
+      # (`fct_kit_deliveries.state` is itself sourced from `dim_accounts` via
+      # a join in Task 10), one owner, reached through the shared entity.
     measures:
       # `kits_shipped` counts every account with a kit obligation, including
       # lost ones. The earlier name `kits_delivered` was misleading: it was used
@@ -3214,21 +3313,23 @@ semantic_models:
   - name: at_risk_accounts
     model: ref('fct_at_risk_accounts')
     defaults:
-      agg_time_dimension: signup_date
+      agg_time_dimension: at_risk_signup_date
     entities:
       - name: account
         type: primary
         expr: account_id
     dimensions:
-      - name: signup_date
+      # Named uniquely per model (see the note above `activation_events`).
+      - name: at_risk_signup_date
         type: time
         expr: pawtrail_signup_date
         type_params:
           time_granularity: day
-      - name: state
-        type: categorical
-      - name: channel
-        type: categorical
+      # No local `state`/`channel`: `accounts` already owns both under the
+      # same `account` primary entity. Group by `account__state` /
+      # `account__channel` instead if a by-state or by-channel cut of the
+      # at-risk queue is ever needed — this plan's own queries only ever
+      # group this model by `account__risk_driver`.
       - name: risk_driver
         type: categorical
     measures:
@@ -3254,17 +3355,28 @@ mf validate-configs
 cd ..
 ```
 
-Expected: `mf validate-configs` reports success with no errors.
+Expected: `mf validate-configs` reports success with no errors, other than
+`No metrics present in the model` — that rule fires unconditionally whenever
+zero metrics are registered, and `_metrics.yml` is Task 15's deliverable, not
+this task's. It is not evidence of a problem here.
 
-Note that `weekly_attach` and `weekly_channel_economics` now key on surrogate
-row keys, with `state` and `channel` declared as ordinary categorical
-dimensions. Every metric in Task 15 groups by those dimensions or by
-`metric_time`, so no cross-model join through those entities is required.
+Note that `weekly_attach` and `weekly_channel_economics` key on surrogate row
+keys (`weekly_attach_row`, `channel_week_row`), with `state` and `channel`
+declared as ordinary categorical dimensions local to those models —
+addressed as `weekly_attach_row__state` / `channel_week_row__channel`, per
+the entity-naming rule above, not `weekly_attach__state` /
+`weekly_channel_economics__channel`. `kit_deliveries` and `at_risk_accounts`,
+by contrast, reach `state`/`channel` through the shared `account` entity join
+to `accounts` (see the naming note above `activation_events`) rather than
+declaring their own — every metric in Task 15 groups by `account__state`,
+`weekly_attach_row__state`, `channel_week_row__channel`, `pitch__state`, or
+`metric_time`, always by the reaching entity's name, never by a semantic
+model's own `name:` field.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add pawtrail_dbt/models/marts/_semantic_models.yml
+git add pawtrail_dbt/models/metricflow_time_spine.sql pawtrail_dbt/models/_metricflow_time_spine.yml pawtrail_dbt/models/marts/_semantic_models.yml
 git commit -m "Add MetricFlow semantic models over the marts layer"
 ```
 
@@ -3559,9 +3671,9 @@ model.
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf query --metrics activation_rate_30d --group-by metric_time__week
-mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state --order kit_on_time_delivery_rate
-mf query --metrics activation_rate_30d --group-by accounts__state --order activation_rate_30d
-mf query --metrics mature_cohort_size_30d --group-by accounts__premium_tenure_band
+mf query --metrics kit_on_time_delivery_rate --group-by account__state --order kit_on_time_delivery_rate
+mf query --metrics activation_rate_30d --group-by account__state --order activation_rate_30d
+mf query --metrics mature_cohort_size_30d --group-by account__premium_tenure_band
 cd ..
 ```
 
@@ -3579,7 +3691,7 @@ Expected, and all four must hold:
    regions while delivery does not, the North Star has silently reverted to the
    looser "delivered within 30 days" rule.
 3. Every region in both queries has a denominator large enough to trust; spot
-   check with `mf query --metrics mature_cohort_size_30d --group-by accounts__state`.
+   check with `mf query --metrics mature_cohort_size_30d --group-by account__state`.
 4. The tenure query returns **all four bands**, none of them empty. This checks
    that the segmentation is non-degenerate, and it is the only tenure assertion
    the generator actually guarantees: Task 3 makes tenure decay across the launch
@@ -3598,15 +3710,15 @@ surfaces a real root-cause signal rather than just displaying numbers.
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
-mf query --metrics cumulative_subscriptions_to_date,attach_rate --group-by weekly_attach__signup_week --csv ../dashboard/control_attach_rate.csv
-mf query --metrics attach_rate --group-by weekly_attach__signup_week,weekly_attach__state --csv ../dashboard/control_attach_rate_by_state.csv
+mf query --metrics cumulative_subscriptions_to_date,attach_rate --group-by weekly_attach_row__signup_week --csv ../dashboard/control_attach_rate.csv
+mf query --metrics attach_rate --group-by weekly_attach_row__signup_week,weekly_attach_row__state --csv ../dashboard/control_attach_rate_by_state.csv
 mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_7d,activation_rate_14d,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
 mf query --metrics avg_days_to_first_login,avg_days_to_kit_delivery,conversion_lag_days --group-by metric_time__week --csv ../dashboard/control_time_to_milestone.csv
-mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel --csv ../dashboard/control_unit_economics.csv
-mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by kit_deliveries__state --csv ../dashboard/control_kit_sla_by_state.csv
-mf query --metrics cac_by_channel,cost_per_activated_account --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel --csv ../dashboard/control_cac_by_channel.csv
-mf query --metrics at_risk_account_rate,at_risk_accounts --group-by at_risk_accounts__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
-mf query --metrics win_rate --group-by sales_pitches__state --csv ../dashboard/control_win_rate.csv
+mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_unit_economics.csv
+mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by account__state --csv ../dashboard/control_kit_sla_by_state.csv
+mf query --metrics cac_by_channel,cost_per_activated_account --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_cac_by_channel.csv
+mf query --metrics at_risk_account_rate,at_risk_accounts --group-by account__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
+mf query --metrics win_rate --group-by pitch__state --csv ../dashboard/control_win_rate.csv
 cd ..
 ```
 
@@ -3997,9 +4109,9 @@ cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf validate-configs
 mf query --metrics activation_rate_30d,kit_on_time_delivery_rate --group-by metric_time__week
-mf query --metrics cac_by_channel --group-by weekly_channel_economics__signup_week,weekly_channel_economics__channel
-mf query --metrics kit_on_time_delivery_rate --group-by kit_deliveries__state --order kit_on_time_delivery_rate
-mf query --metrics at_risk_account_rate --group-by at_risk_accounts__risk_driver
+mf query --metrics cac_by_channel --group-by channel_week_row__signup_week,channel_week_row__channel
+mf query --metrics kit_on_time_delivery_rate --group-by account__state --order kit_on_time_delivery_rate
+mf query --metrics at_risk_account_rate --group-by account__risk_driver
 cd ..
 ```
 
