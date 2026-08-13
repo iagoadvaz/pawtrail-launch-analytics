@@ -43,3 +43,24 @@ models:
               arguments:
                 to: ref('fct_premium_base')
                 field: state
+
+  - name: fct_weekly_attach
+    columns:
+      - name: weekly_attach_key
+        tests:
+          - unique
+          - not_null
+      # The state x week spine is densified (see Step 4), so a state appearing
+      # here that is absent from the addressable base means the spine invented a
+      # row — which the monotonicity test above cannot see, because an invented
+      # state is internally consistent across its own weeks.
+      - name: state
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state
+      - name: attach_rate
+        tests:
+          - not_null
