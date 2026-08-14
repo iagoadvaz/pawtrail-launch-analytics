@@ -50,10 +50,12 @@ models:
         tests:
           - unique
           - not_null
-      # The state x week spine is densified (see Step 4), so a state appearing
-      # here that is absent from the addressable base means the spine invented a
-      # row — which the monotonicity test above cannot see, because an invented
-      # state is internally consistent across its own weeks.
+      # The state x week spine is densified (see fct_weekly_attach.sql), so a
+      # state appearing here that is absent from the addressable base means
+      # the spine invented a row. That row's own cumulative_subscriptions is
+      # still internally consistent (monotonically non-decreasing week over
+      # week) so nothing about the SQL would surface the problem; this
+      # relationships test against fct_premium_base is what catches it.
       - name: state
         tests:
           - not_null

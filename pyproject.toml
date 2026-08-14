@@ -1,3 +1,11 @@
+[project]
+name = "pawtrail-launch-analytics"
+version = "0.1.0"
+# dbt-metricflow 0.13.0 requires Python <3.14,>=3.10. This project is not
+# pip-installed as a package (no [build-system] table); this constraint just
+# documents the interpreter compatibility window for the venv used to run it.
+requires-python = ">=3.10,<3.14"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["data", "generator"]

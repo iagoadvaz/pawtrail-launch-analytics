@@ -11,14 +11,13 @@ models:
   # the Olist-derived distribution truncated to the top N (Task 2), so a literal
   # list would hard-code `n_states` into a test and fail spuriously whenever that
   # config changes. It gets a relationships test against fct_premium_base instead,
-  # added in Task 11 once that model exists.
+  # since that model has the one guaranteed-unique row per state.
   - name: dim_accounts
     columns:
       - name: account_id
         tests:
           - unique
           - not_null
-      # relationships added in Task 11, once fct_premium_base exists to point at.
       - name: state
         tests:
           - not_null
@@ -93,8 +92,8 @@ models:
               arguments:
                 to: ref('dim_accounts')
                 field: account_id
-      # `state` gets its relationships test in Task 11, once fct_premium_base
-      # exists to point at.
+      # `state` is tested against fct_premium_base, the project's state
+      # reference model (see the comment on that model in _marts__business.yml).
       - name: state
         tests:
           - not_null

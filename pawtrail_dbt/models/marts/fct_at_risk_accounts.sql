@@ -34,8 +34,7 @@ select
     -- accounts with confirmed on-time digital + kit), not a bug in this case
     -- branch. Do not "fix" an empty bucket here by editing this condition,
     -- and do not add a non-degeneracy test asserting this branch is
-    -- populated -- it would fail on most re-seeds. See task-13b-report.md
-    -- correction for the full calculation.
+    -- populated -- it would fail on most re-seeds.
     case
         when no_digital_access_14d and kit_failed_sla then 'both_legs_failed'
         when kit_failed_sla then 'physical_failure'

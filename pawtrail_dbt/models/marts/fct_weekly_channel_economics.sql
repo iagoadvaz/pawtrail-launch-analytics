@@ -66,9 +66,13 @@ select
     w.activated_subscriptions,
     s.spend_usd,
     s.spend_usd / nullif(w.new_subscriptions, 0) as cac,
-    -- Denominator is the activated share of the *mature* cohort applied to all
-    -- acquired accounts, so a week of recent signups does not report an
-    -- artificially catastrophic cost per activated account.
+    -- Denominator is activated_subscriptions as-is (activated AND mature), not
+    -- rescaled to the full acquired cohort. A week that is only partially
+    -- mature therefore reads a high, not-yet-comparable cost per activated
+    -- account -- there just aren't many activated+mature accounts yet to divide
+    -- spend by, even though spend for the week is already fully counted. When
+    -- comparing CPA across weeks, treat the most recent 1-2 weeks as still
+    -- settling rather than as directly comparable to fully-mature earlier weeks.
     s.spend_usd / nullif(w.activated_subscriptions, 0) as cost_per_activated_account,
     w.avg_price,
     w.mrr_usd,

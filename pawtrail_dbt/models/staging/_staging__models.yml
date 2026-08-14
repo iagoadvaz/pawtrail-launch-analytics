@@ -14,12 +14,14 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['small', 'medium', 'large']
+              arguments:
+                values: ['small', 'medium', 'large']
       - name: channel
         tests:
           - not_null
           - accepted_values:
-              values: ['self_serve', 'sales_assisted']
+              arguments:
+                values: ['self_serve', 'sales_assisted']
       - name: pawtrail_signup_date
         tests:
           - not_null
@@ -31,8 +33,9 @@ models:
           - unique
           - not_null
           - relationships:
-              to: ref('stg_subscriptions')
-              field: account_id
+              arguments:
+                to: ref('stg_subscriptions')
+                field: account_id
 
   - name: stg_digital_engagement
     columns:
@@ -41,5 +44,6 @@ models:
           - unique
           - not_null
           - relationships:
-              to: ref('stg_subscriptions')
-              field: account_id
+              arguments:
+                to: ref('stg_subscriptions')
+                field: account_id

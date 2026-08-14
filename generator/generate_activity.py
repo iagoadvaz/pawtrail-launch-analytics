@@ -19,9 +19,12 @@ import pandas as pd
 # very slow deliveries) is what we want; the level is rescaled to this target so
 # the SLA threshold in Task 8 sits at a meaningful point on the distribution.
 # Calibrated against the 10-day SLA so the baseline lands near 88% on-time and
-# the injected problem region near 56% — a clear, investigable gap where both
-# ends remain plausible. (A larger penalty drives the problem region to a 0%
-# on-time rate, which is not a root cause an analyst would find credible.)
+# the injected problem region near 56% among kits that actually get delivered
+# (excludes lost kits; the mart-layer on-time rate counts lost kits as SLA
+# failures too, which lands the problem region around 51% there instead) —
+# a clear, investigable gap where both ends remain plausible. (A larger
+# penalty drives the problem region to a 0% on-time rate, which is not a
+# root cause an analyst would find credible.)
 TARGET_MEDIAN_FULFILLMENT_DAYS = 5.0
 
 LOST_RATE_BASELINE = 0.02

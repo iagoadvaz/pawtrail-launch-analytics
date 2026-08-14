@@ -25,7 +25,7 @@ The dataset is hybrid:
 
 ```
 Olist (real: delivery timing, state distribution)  ─┐
-                                                      ├─→ DuckDB (raw) ─→ dbt (staging → intermediate → marts) ─→ MetricFlow (semantic layer) ─→ Tableau Public
+                                                      ├─→ DuckDB (raw) ─→ dbt (staging → intermediate → marts) ─→ MetricFlow (semantic layer) ─→ Tableau Public (not yet published)
 Synthetic generator (subscriptions, engagement,     ─┘
 kit deliveries, pricing, spend, sales pitches)
 ```
@@ -35,16 +35,26 @@ kit deliveries, pricing, spend, sales pitches)
   test-first (assertion before model — see the implementation plan)
 - **Semantic layer**: dbt Semantic Layer / MetricFlow, queried locally via
   the `mf` CLI
-- **Dashboard**: Tableau Public — see `dashboard/README.md` for the
-  published link
+- **Dashboard**: Tableau Public — not yet published (deferred; see
+  `dashboard/README.md`), but the metric exports it will be built from are
+  already in `dashboard/`
 
 ## How to run
+
+Requires Python 3.10-3.13 (dbt-metricflow does not yet support 3.14+). If
+your default `python3` is 3.14 or newer, point the venv at an older
+interpreter, e.g. `python3.12 -m venv .venv`.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 1. Get the real Olist reference distributions (see data/olist_reference/README.md)
+# 1. Optional — only needed to regenerate the reference distributions from
+# scratch; requires a Kaggle account, `pip install kaggle`, and
+# `kaggle datasets download ...` per data/olist_reference/README.md. The
+# derived CSVs this step produces (reference_delivery_durations.csv,
+# reference_state_distribution.csv) are already committed, so skip this and
+# go straight to step 2 unless you specifically want to re-derive them.
 python data/olist_reference/fetch_olist_reference_distributions.py
 
 # 2. Generate synthetic PawTrail data
@@ -71,7 +81,8 @@ mf query --metrics activation_rate_30d --group-by metric_time__week
 - `data/olist_reference/` — real-data extraction (purchase-to-delivery duration, state share)
 - `generator/` — synthetic PawTrail data generators (pytest-covered)
 - `pawtrail_dbt/` — dbt project: staging → intermediate → marts, semantic layer
-- `dashboard/` — Tableau Public workbook link and metric exports
+- `dashboard/` — metric exports (`control_*.csv`); Tableau Public workbook
+  link not yet published (see `dashboard/README.md`)
 - `docs/superpowers/specs/` — design spec
 - `docs/superpowers/plans/` — implementation plan
 - `NARRATIVE.md` — 1-page launch-health memo

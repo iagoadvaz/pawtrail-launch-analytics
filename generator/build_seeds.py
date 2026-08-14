@@ -24,9 +24,13 @@ N_ACCOUNTS = 3000
 LAUNCH_DAYS = 120
 SEED = 42
 PROBLEM_STATE = "OH"
-# Calibrated against the 10-day kit SLA: this lands the problem region near 56%
-# on-time against an ~88% baseline. A larger penalty (the original 12) pushes it
-# to 0%, which reads as a broken generator rather than an operational problem.
+# Calibrated against the 10-day kit SLA: this lands the problem region near
+# 56% on-time (among kits that actually get delivered) against an ~88%
+# baseline. The mart-layer on-time rate counts lost kits as SLA failures too,
+# which lands the problem region around 51% there instead -- both figures are
+# correct, just in different frames. A larger penalty (the original 12) pushes
+# it to 0%, which reads as a broken generator rather than an operational
+# problem.
 PROBLEM_DELAY_PENALTY_DAYS = 5
 # Kept well above N_ACCOUNTS so the resulting attach rate stays realistic (< 100%).
 TOTAL_ELIGIBLE_PREMIUM_ACCOUNTS = 15000
