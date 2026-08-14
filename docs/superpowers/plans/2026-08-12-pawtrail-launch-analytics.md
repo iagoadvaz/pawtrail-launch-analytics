@@ -2610,7 +2610,7 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` (Task 7), `int_activation_funnel` (Task 8), `fct_marketing_spend` and `dim_pricing` (Task 11).
-- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, spend_usd, cac, cost_per_activated_account, avg_price, mrr_usd, contribution_margin_per_subscription, cac_payback_months)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list.
+- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, estimated_activated_subscriptions, spend_usd, activation_measurable_spend_usd, cac, cost_per_activated_account, avg_price, mrr_usd, contribution_margin_per_subscription, cac_payback_months)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list. `estimated_activated_subscriptions` and `activation_measurable_spend_usd` are the maturity-corrected pair behind `cost_per_activated_account`; see the comments in the model.
 
 - [ ] **Step 1: Write the schema tests before the model exists**
 
@@ -2712,32 +2712,66 @@ spend as (
     from {{ ref('fct_marketing_spend') }}
 ),
 
+-- The estimate below is referenced twice in the final select, so it is computed
+-- once here rather than repeated -- a select alias cannot be reused inside the
+-- same select list.
+joined as (
+    select
+        w.channel,
+        w.signup_week,
+        w.new_subscriptions,
+        w.mature_subscriptions,
+        w.activated_subscriptions,
+        w.avg_price,
+        w.mrr_usd,
+        w.contribution_margin_per_subscription,
+        s.spend_usd,
+        -- Estimated eventual activations across the whole acquired cohort: the
+        -- activation rate observed among the week's *mature* accounts, applied
+        -- to every account the week acquired. Spend is counted for the full
+        -- cohort, so dividing it by activated-and-mature alone puts a complete
+        -- numerator over a partial denominator and reports an artificially
+        -- catastrophic cost per activated account in exactly the most recent
+        -- weeks -- the ones a launch dashboard is read for. Null while no
+        -- account in the week is mature: the activation rate is unestimable
+        -- then, and an absent number is honest where a censored one is not.
+        (w.activated_subscriptions * 1.0 / nullif(w.mature_subscriptions, 0))
+            * w.new_subscriptions as estimated_activated_subscriptions
+    from weekly_subs w
+    left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
+)
+
 select
     -- Surrogate key: the grain is (channel, week), so `channel` alone is not a
     -- valid primary entity for the semantic model.
-    w.channel || '_' || cast(w.signup_week as varchar) as channel_week_key,
-    w.channel,
-    w.signup_week,
-    w.new_subscriptions,
-    w.mature_subscriptions,
-    w.activated_subscriptions,
-    s.spend_usd,
-    s.spend_usd / nullif(w.new_subscriptions, 0) as cac,
-    -- Denominator is the activated share of the *mature* cohort applied to all
-    -- acquired accounts, so a week of recent signups does not report an
-    -- artificially catastrophic cost per activated account.
-    s.spend_usd / nullif(w.activated_subscriptions, 0) as cost_per_activated_account,
-    w.avg_price,
-    w.mrr_usd,
-    w.contribution_margin_per_subscription,
+    channel || '_' || cast(signup_week as varchar) as channel_week_key,
+    channel,
+    signup_week,
+    new_subscriptions,
+    mature_subscriptions,
+    activated_subscriptions,
+    estimated_activated_subscriptions,
+    spend_usd,
+    -- The spend that pairs with the estimate above. Nulled for weeks no account
+    -- has matured in, so that rolling cost per activated account up across weeks
+    -- cannot add spend to the numerator whose activations are missing from the
+    -- denominator. `spend_usd` stays intact for cac and channel_spend, which are
+    -- whole-cohort figures and correctly count every dollar.
+    case when mature_subscriptions > 0 then spend_usd end
+        as activation_measurable_spend_usd,
+    spend_usd / nullif(new_subscriptions, 0) as cac,
+    spend_usd / nullif(estimated_activated_subscriptions, 0)
+        as cost_per_activated_account,
+    avg_price,
+    mrr_usd,
+    contribution_margin_per_subscription,
     -- CAC payback in months (spec §6): acquisition cost divided by the monthly
     -- contribution margin it buys. Computed here rather than as a derived metric
     -- because both inputs already live at this grain, and nullif keeps a
     -- zero-or-negative-margin week from producing an infinite payback.
-    (s.spend_usd / nullif(w.new_subscriptions, 0))
-        / nullif(w.contribution_margin_per_subscription, 0) as cac_payback_months
-from weekly_subs w
-left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
+    (spend_usd / nullif(new_subscriptions, 0))
+        / nullif(contribution_margin_per_subscription, 0) as cac_payback_months
+from joined
 ```
 
 - [ ] **Step 4: Run `dbt build` to verify it passes**
@@ -3327,6 +3361,20 @@ semantic_models:
         agg: sum
         expr: spend_usd
         create_metric: true
+      # The cost_per_activated_account pair. Both sides are restricted to the
+      # weeks that have any mature account, so the ratio compares like with
+      # like at every grain: summing an estimate that is null for still-green
+      # weeks against a spend total that is not would reintroduce, on roll-up,
+      # exactly the censoring the estimate exists to remove. `channel_spend_usd`
+      # is deliberately not reused as the numerator for that reason.
+      - name: channel_activation_measurable_spend_usd
+        agg: sum
+        expr: activation_measurable_spend_usd
+        create_metric: true
+      - name: channel_estimated_activated_subscriptions
+        agg: sum
+        expr: estimated_activated_subscriptions
+        create_metric: true
       - name: avg_contribution_margin
         agg: average
         expr: contribution_margin_per_subscription
@@ -3674,12 +3722,18 @@ metrics:
       numerator: channel_spend_usd
       denominator: channel_new_subscriptions
 
+  # Denominator is the activated share of the *mature* cohort applied to all
+  # acquired accounts (see fct_weekly_channel_economics), not the raw
+  # activated-and-mature count. Against the raw count a week whose accounts are
+  # mostly still inside their 30-day window divides a full week of spend by the
+  # handful of accounts that have finished, and reads several times its true
+  # cost. Null for weeks with no mature account at all rather than guessing.
   - name: cost_per_activated_account
     type: ratio
     label: "Cost per Activated Account"
     type_params:
-      numerator: channel_spend_usd
-      denominator: channel_activated_subscriptions
+      numerator: channel_activation_measurable_spend_usd
+      denominator: channel_estimated_activated_subscriptions
 
   - name: channel_spend
     type: simple

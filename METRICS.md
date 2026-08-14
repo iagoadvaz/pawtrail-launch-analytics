@@ -169,8 +169,8 @@ performance.
 - **Source:** `weekly_channel_economics` (`fct_weekly_channel_economics`)
 
 ### cost_per_activated_account
-- **Definition:** Acquisition cost per account that went on to actually activate, by channel — a quality-adjusted CAC that punishes channels that acquire accounts cheaply but don't activate them.
-- **Formula:** `ratio` — `channel_spend_usd ÷ channel_activated_subscriptions`
+- **Definition:** Acquisition cost per account that went on to actually activate, by channel — a quality-adjusted CAC that punishes channels that acquire accounts cheaply but don't activate them. The denominator is the activation rate observed among the week's *mature* accounts applied to every account the week acquired, not the raw activated-and-mature count: spend is booked for the whole cohort, so dividing it by only the accounts that have finished their 30-day window would put a complete numerator over a partial denominator and overstate cost in the most recent weeks. Null for weeks in which no account is mature yet, where the activation rate cannot be estimated at all.
+- **Formula:** `ratio` — `channel_activation_measurable_spend_usd ÷ channel_estimated_activated_subscriptions`
 - **Source:** `weekly_channel_economics`
 
 ### channel_spend

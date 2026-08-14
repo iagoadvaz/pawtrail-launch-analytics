@@ -32,12 +32,18 @@ currently holds 944 accounts: 496 flagged for digital-leg failure, 352 for
 physical-leg failure, and 96 for both legs failed. Customer Success should
 prioritize the 448 accounts with a physical-leg failure (352 + 96) — the
 segment mechanically linked to the kit-delivery problem — and expect a
-disproportionate share to carry Ohio addresses. Separately, channel spend
-discipline is working and should continue unchanged: in the latest mature
-cohort, cost per activated account was $16.60 for self-serve versus $55.55 for
-sales-assisted (3.3x), consistent with every prior week. The growth lever to
-pull this month is fixing Ohio fulfillment, not reallocating acquisition
-spend.
+disproportionate share to carry Ohio addresses. Acquisition efficiency needs
+watching rather than leaving alone: cost per activated account has nearly
+tripled in both channels since the March 2 cohort, from $4.64 to $13.07 for
+self-serve and from $12.65 to $37.73 for sales-assisted. Raw CAC rose 2.3x over
+that stretch while cost per *activated* account rose 2.8x — acquisition got
+more expensive and the accounts it bought activated less often, which is the
+Ohio failure surfacing in the unit economics. The gap between the two channels
+is not itself the story: sales-assisted costs 2.9x self-serve per activated
+account, inside its 2.7-4.7x range since February. The growth lever to pull
+this month is still fixing Ohio fulfillment — it is also the cheapest way to
+bring cost per activated account back down, because it works on the
+denominator rather than the spend.
 
 ## What This Memo Does Not Measure
 
@@ -54,7 +60,7 @@ reportable as the cohort base matures — none is skipped for convenience.
 
 ## How These Numbers Are Counted
 
-Two choices affect every rate above. First, activation rates use the mature
+Three choices affect every rate above. First, activation rates use the mature
 cohort only: an account must have had the full 7/10/30-day window to be
 counted, so recent signups are excluded rather than scored as failures — this
 is why the 30-day rate covers far fewer accounts (136 in the March 30 cohort)
@@ -62,4 +68,12 @@ than total subscribers that week, and why the four most recent weeks show no
 30-day rate at all. Second, "activated" requires an on-time kit, not merely a
 delivered one: because kits arrive within 30 days in nearly every state, a
 delivered-within-30-days rule would let Ohio score as fully activated and hide
-the exact problem this memo identifies.
+the exact problem this memo identifies. Third, cost per activated account
+divides a week's spend by the activation rate of that week's mature accounts
+applied to everyone it acquired, not by the mature activated count alone.
+Spend is booked for the whole cohort the week it lands, so dividing it by only
+the accounts that have finished their window would compare a complete
+numerator against a partial one and overstate cost in exactly the newest
+weeks: the March 30 cohort reads $13.07 for self-serve on that basis and
+$16.60 on the naive one. The four most recent weeks have no mature accounts at
+all, so they carry no figure rather than a guessed one.

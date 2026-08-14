@@ -53,35 +53,65 @@ weekly_subs as (
 spend as (
     select channel, date_trunc('week', week_start_date) as signup_week, spend_usd
     from {{ ref('fct_marketing_spend') }}
+),
+
+-- The estimate below is referenced twice in the final select, so it is computed
+-- once here rather than repeated -- a select alias cannot be reused inside the
+-- same select list.
+joined as (
+    select
+        w.channel,
+        w.signup_week,
+        w.new_subscriptions,
+        w.mature_subscriptions,
+        w.activated_subscriptions,
+        w.avg_price,
+        w.mrr_usd,
+        w.contribution_margin_per_subscription,
+        s.spend_usd,
+        -- Estimated eventual activations across the whole acquired cohort: the
+        -- activation rate observed among the week's *mature* accounts, applied
+        -- to every account the week acquired. Spend is counted for the full
+        -- cohort, so dividing it by activated-and-mature alone puts a complete
+        -- numerator over a partial denominator and reports an artificially
+        -- catastrophic cost per activated account in exactly the most recent
+        -- weeks -- the ones a launch dashboard is read for. Null while no
+        -- account in the week is mature: the activation rate is unestimable
+        -- then, and an absent number is honest where a censored one is not.
+        (w.activated_subscriptions * 1.0 / nullif(w.mature_subscriptions, 0))
+            * w.new_subscriptions as estimated_activated_subscriptions
+    from weekly_subs w
+    left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
 )
 
 select
     -- Surrogate key: the grain is (channel, week), so `channel` alone is not a
     -- valid primary entity for the semantic model.
-    w.channel || '_' || cast(w.signup_week as varchar) as channel_week_key,
-    w.channel,
-    w.signup_week,
-    w.new_subscriptions,
-    w.mature_subscriptions,
-    w.activated_subscriptions,
-    s.spend_usd,
-    s.spend_usd / nullif(w.new_subscriptions, 0) as cac,
-    -- Denominator is activated_subscriptions as-is (activated AND mature), not
-    -- rescaled to the full acquired cohort. A week that is only partially
-    -- mature therefore reads a high, not-yet-comparable cost per activated
-    -- account -- there just aren't many activated+mature accounts yet to divide
-    -- spend by, even though spend for the week is already fully counted. When
-    -- comparing CPA across weeks, treat the most recent 1-2 weeks as still
-    -- settling rather than as directly comparable to fully-mature earlier weeks.
-    s.spend_usd / nullif(w.activated_subscriptions, 0) as cost_per_activated_account,
-    w.avg_price,
-    w.mrr_usd,
-    w.contribution_margin_per_subscription,
+    channel || '_' || cast(signup_week as varchar) as channel_week_key,
+    channel,
+    signup_week,
+    new_subscriptions,
+    mature_subscriptions,
+    activated_subscriptions,
+    estimated_activated_subscriptions,
+    spend_usd,
+    -- The spend that pairs with the estimate above. Nulled for weeks no account
+    -- has matured in, so that rolling cost per activated account up across weeks
+    -- cannot add spend to the numerator whose activations are missing from the
+    -- denominator. `spend_usd` stays intact for cac and channel_spend, which are
+    -- whole-cohort figures and correctly count every dollar.
+    case when mature_subscriptions > 0 then spend_usd end
+        as activation_measurable_spend_usd,
+    spend_usd / nullif(new_subscriptions, 0) as cac,
+    spend_usd / nullif(estimated_activated_subscriptions, 0)
+        as cost_per_activated_account,
+    avg_price,
+    mrr_usd,
+    contribution_margin_per_subscription,
     -- CAC payback in months (spec §6): acquisition cost divided by the monthly
     -- contribution margin it buys. Computed here rather than as a derived metric
     -- because both inputs already live at this grain, and nullif keeps a
     -- zero-or-negative-margin week from producing an infinite payback.
-    (s.spend_usd / nullif(w.new_subscriptions, 0))
-        / nullif(w.contribution_margin_per_subscription, 0) as cac_payback_months
-from weekly_subs w
-left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
+    (spend_usd / nullif(new_subscriptions, 0))
+        / nullif(contribution_margin_per_subscription, 0) as cac_payback_months
+from joined

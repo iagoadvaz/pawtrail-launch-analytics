@@ -217,12 +217,18 @@ metrics:
       numerator: channel_spend_usd
       denominator: channel_new_subscriptions
 
+  # Denominator is the activated share of the *mature* cohort applied to all
+  # acquired accounts (see fct_weekly_channel_economics), not the raw
+  # activated-and-mature count. Against the raw count a week whose accounts are
+  # mostly still inside their 30-day window divides a full week of spend by the
+  # handful of accounts that have finished, and reads several times its true
+  # cost. Null for weeks with no mature account at all rather than guessing.
   - name: cost_per_activated_account
     type: ratio
     label: "Cost per Activated Account"
     type_params:
-      numerator: channel_spend_usd
-      denominator: channel_activated_subscriptions
+      numerator: channel_activation_measurable_spend_usd
+      denominator: channel_estimated_activated_subscriptions
 
   - name: channel_spend
     type: simple

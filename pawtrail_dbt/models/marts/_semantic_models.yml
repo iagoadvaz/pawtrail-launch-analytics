@@ -290,6 +290,20 @@ semantic_models:
         agg: sum
         expr: spend_usd
         create_metric: true
+      # The cost_per_activated_account pair. Both sides are restricted to the
+      # weeks that have any mature account, so the ratio compares like with
+      # like at every grain: summing an estimate that is null for still-green
+      # weeks against a spend total that is not would reintroduce, on roll-up,
+      # exactly the censoring the estimate exists to remove. `channel_spend_usd`
+      # is deliberately not reused as the numerator for that reason.
+      - name: channel_activation_measurable_spend_usd
+        agg: sum
+        expr: activation_measurable_spend_usd
+        create_metric: true
+      - name: channel_estimated_activated_subscriptions
+        agg: sum
+        expr: estimated_activated_subscriptions
+        create_metric: true
       - name: avg_contribution_margin
         agg: average
         expr: contribution_margin_per_subscription
