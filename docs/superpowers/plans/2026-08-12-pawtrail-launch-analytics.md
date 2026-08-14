@@ -2610,7 +2610,7 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 **Interfaces:**
 - Consumes: `stg_subscriptions` (Task 7), `int_activation_funnel` (Task 8), `fct_marketing_spend` and `dim_pricing` (Task 11).
-- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, estimated_activated_subscriptions, spend_usd, activation_measurable_spend_usd, cac, cost_per_activated_account, avg_price, mrr_usd, contribution_margin_per_subscription, cac_payback_months)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list. `estimated_activated_subscriptions` and `activation_measurable_spend_usd` are the maturity-corrected pair behind `cost_per_activated_account`; see the comments in the model.
+- Produces: `fct_weekly_channel_economics(channel_week_key, channel, signup_week, new_subscriptions, mature_subscriptions, activated_subscriptions, estimated_activated_subscriptions, spend_usd, activation_measurable_spend_usd, cac, cost_per_activated_account, avg_price, mrr_usd, contribution_margin_per_subscription, total_contribution_margin_usd, cac_payback_months)` — consumed by Task 14's `weekly_channel_economics` semantic model. Contribution margin is weighted by each week's actual pet-tier mix rather than being an unweighted average of the tier list. `estimated_activated_subscriptions` and `activation_measurable_spend_usd` are the maturity-corrected pair behind `cost_per_activated_account`; see the comments in the model.
 
 - [ ] **Step 1: Write the schema tests before the model exists**
 
@@ -2699,7 +2699,13 @@ weekly_subs as (
         -- at each account's own tier price, so the pet-tier mix moves it; a
         -- headcount times a blended price would not.
         sum(monthly_price_usd) as mrr_usd,
-        avg(contribution_margin) as contribution_margin_per_subscription
+        avg(contribution_margin) as contribution_margin_per_subscription,
+        -- The total the per-subscription average is drawn from. Both payback and
+        -- the reported margin per subscription are built from this rather than
+        -- from the average above: averaging an already-averaged column across
+        -- weeks weights a week of three signups the same as a week of three
+        -- hundred, and a launch's earliest weeks are its smallest.
+        sum(contribution_margin) as total_contribution_margin_usd
     from subs_priced
     group by 1, 2
 ),
@@ -2725,6 +2731,7 @@ joined as (
         w.avg_price,
         w.mrr_usd,
         w.contribution_margin_per_subscription,
+        w.total_contribution_margin_usd,
         s.spend_usd,
         -- Estimated eventual activations across the whole acquired cohort: the
         -- activation rate observed among the week's *mature* accounts, applied
@@ -2765,12 +2772,15 @@ select
     avg_price,
     mrr_usd,
     contribution_margin_per_subscription,
+    total_contribution_margin_usd,
     -- CAC payback in months (spec §6): acquisition cost divided by the monthly
-    -- contribution margin it buys. Computed here rather than as a derived metric
-    -- because both inputs already live at this grain, and nullif keeps a
-    -- zero-or-negative-margin week from producing an infinite payback.
-    (spend_usd / nullif(new_subscriptions, 0))
-        / nullif(contribution_margin_per_subscription, 0) as cac_payback_months
+    -- contribution margin it buys. Expressed as the week's whole spend over the
+    -- week's whole margin rather than as cac divided by the per-subscription
+    -- average -- the two are equal at this grain, but only this form sums
+    -- correctly when the semantic layer rolls weeks or channels together.
+    -- nullif keeps a zero-or-negative-margin week from producing an infinite
+    -- payback.
+    spend_usd / nullif(total_contribution_margin_usd, 0) as cac_payback_months
 from joined
 ```
 
@@ -3375,18 +3385,22 @@ semantic_models:
         agg: sum
         expr: estimated_activated_subscriptions
         create_metric: true
-      - name: avg_contribution_margin
-        agg: average
-        expr: contribution_margin_per_subscription
+      # Backs both cac_payback_months and contribution_margin_per_subscription.
+      # Neither is an `average` measure over an already-averaged column: at this
+      # model's (channel, week) grain such a measure is a no-op, but the moment
+      # the semantic layer groups more coarsely it weights every week equally
+      # regardless of how many subscriptions the week actually carried, and a
+      # launch's earliest weeks are both its smallest and its most extreme.
+      - name: channel_total_contribution_margin_usd
+        agg: sum
+        expr: total_contribution_margin_usd
+        create_metric: true
       # Incremental MRR sums across channels and weeks, so unlike attach rate it
       # is safe to group by either or neither.
       - name: mrr_added_usd
         agg: sum
         expr: mrr_usd
         create_metric: true
-      - name: avg_cac_payback_months
-        agg: average
-        expr: cac_payback_months
 
   - name: sales_pitches
     model: ref('fct_sales_pitches')
@@ -3663,11 +3677,18 @@ metrics:
       numerator: mrr_added_usd
       denominator: channel_new_subscriptions
 
+  # Total spend over total monthly contribution margin, not the average of each
+  # week's own payback figure. Averaging the per-week ratio gave the launch's
+  # first weeks -- three and six subscriptions, with paybacks of 41 and 16
+  # months against a settled 0.3 -- the same weight as weeks carrying a hundred
+  # or more, and reported 3.25 months where the acquired book actually pays
+  # back in 0.84.
   - name: cac_payback_months
-    type: simple
+    type: ratio
     label: "Estimated CAC Payback (months)"
     type_params:
-      measure: avg_cac_payback_months
+      numerator: channel_spend_usd
+      denominator: channel_total_contribution_margin_usd
 
   - name: mature_cohort_size_30d
     type: simple
@@ -3741,11 +3762,16 @@ metrics:
     type_params:
       measure: channel_spend_usd
 
+  # Total margin over total subscriptions, for the same reason as
+  # cac_payback_months above. The bias here is small (the tier mix barely moves
+  # week to week) but the shape is identical, and leaving one of the two as an
+  # average-of-averages invites the pattern back.
   - name: contribution_margin_per_subscription
-    type: simple
+    type: ratio
     label: "Contribution Margin per Subscription"
     type_params:
-      measure: avg_contribution_margin
+      numerator: channel_total_contribution_margin_usd
+      denominator: channel_new_subscriptions
 ```
 
 - [ ] **Step 2: Validate and list the metrics**

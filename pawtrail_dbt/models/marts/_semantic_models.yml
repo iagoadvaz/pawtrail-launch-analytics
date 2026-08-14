@@ -304,18 +304,22 @@ semantic_models:
         agg: sum
         expr: estimated_activated_subscriptions
         create_metric: true
-      - name: avg_contribution_margin
-        agg: average
-        expr: contribution_margin_per_subscription
+      # Backs both cac_payback_months and contribution_margin_per_subscription.
+      # Neither is an `average` measure over an already-averaged column: at this
+      # model's (channel, week) grain such a measure is a no-op, but the moment
+      # the semantic layer groups more coarsely it weights every week equally
+      # regardless of how many subscriptions the week actually carried, and a
+      # launch's earliest weeks are both its smallest and its most extreme.
+      - name: channel_total_contribution_margin_usd
+        agg: sum
+        expr: total_contribution_margin_usd
+        create_metric: true
       # Incremental MRR sums across channels and weeks, so unlike attach rate it
       # is safe to group by either or neither.
       - name: mrr_added_usd
         agg: sum
         expr: mrr_usd
         create_metric: true
-      - name: avg_cac_payback_months
-        agg: average
-        expr: cac_payback_months
 
   - name: sales_pitches
     model: ref('fct_sales_pitches')

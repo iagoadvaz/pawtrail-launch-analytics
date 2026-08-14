@@ -189,13 +189,13 @@ performance.
 - **Source:** `weekly_channel_economics`
 
 ### contribution_margin_per_subscription
-- **Definition:** Average contribution margin generated per subscription.
-- **Formula:** `simple` — measure `avg_contribution_margin`.
+- **Definition:** Contribution margin generated per subscription — total margin over total subscriptions, so each week counts in proportion to the subscriptions it actually carried rather than equally.
+- **Formula:** `ratio` — `channel_total_contribution_margin_usd ÷ channel_new_subscriptions`
 - **Source:** `weekly_channel_economics`
 
 ### cac_payback_months
-- **Definition:** Estimated number of months to recover customer acquisition cost out of contribution margin.
-- **Formula:** `simple` — measure `avg_cac_payback_months`.
+- **Definition:** Estimated number of months to recover customer acquisition cost out of contribution margin — total spend over total monthly contribution margin. Not the average of each week's own payback: the launch's first weeks carry a handful of subscriptions and payback figures in the tens of months, and weighting those equally with weeks carrying a hundred or more reports roughly four times the true figure.
+- **Formula:** `ratio` — `channel_spend_usd ÷ channel_total_contribution_margin_usd`
 - **Source:** `weekly_channel_economics`
 
 ---

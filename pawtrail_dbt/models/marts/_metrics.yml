@@ -158,11 +158,18 @@ metrics:
       numerator: mrr_added_usd
       denominator: channel_new_subscriptions
 
+  # Total spend over total monthly contribution margin, not the average of each
+  # week's own payback figure. Averaging the per-week ratio gave the launch's
+  # first weeks -- three and six subscriptions, with paybacks of 41 and 16
+  # months against a settled 0.3 -- the same weight as weeks carrying a hundred
+  # or more, and reported 3.25 months where the acquired book actually pays
+  # back in 0.84.
   - name: cac_payback_months
-    type: simple
+    type: ratio
     label: "Estimated CAC Payback (months)"
     type_params:
-      measure: avg_cac_payback_months
+      numerator: channel_spend_usd
+      denominator: channel_total_contribution_margin_usd
 
   - name: mature_cohort_size_30d
     type: simple
@@ -236,8 +243,13 @@ metrics:
     type_params:
       measure: channel_spend_usd
 
+  # Total margin over total subscriptions, for the same reason as
+  # cac_payback_months above. The bias here is small (the tier mix barely moves
+  # week to week) but the shape is identical, and leaving one of the two as an
+  # average-of-averages invites the pattern back.
   - name: contribution_margin_per_subscription
-    type: simple
+    type: ratio
     label: "Contribution Margin per Subscription"
     type_params:
-      measure: avg_contribution_margin
+      numerator: channel_total_contribution_margin_usd
+      denominator: channel_new_subscriptions

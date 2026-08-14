@@ -42,7 +42,13 @@ weekly_subs as (
         -- at each account's own tier price, so the pet-tier mix moves it; a
         -- headcount times a blended price would not.
         sum(monthly_price_usd) as mrr_usd,
-        avg(contribution_margin) as contribution_margin_per_subscription
+        avg(contribution_margin) as contribution_margin_per_subscription,
+        -- The total the per-subscription average is drawn from. Both payback and
+        -- the reported margin per subscription are built from this rather than
+        -- from the average above: averaging an already-averaged column across
+        -- weeks weights a week of three signups the same as a week of three
+        -- hundred, and a launch's earliest weeks are its smallest.
+        sum(contribution_margin) as total_contribution_margin_usd
     from subs_priced
     group by 1, 2
 ),
@@ -68,6 +74,7 @@ joined as (
         w.avg_price,
         w.mrr_usd,
         w.contribution_margin_per_subscription,
+        w.total_contribution_margin_usd,
         s.spend_usd,
         -- Estimated eventual activations across the whole acquired cohort: the
         -- activation rate observed among the week's *mature* accounts, applied
@@ -108,10 +115,13 @@ select
     avg_price,
     mrr_usd,
     contribution_margin_per_subscription,
+    total_contribution_margin_usd,
     -- CAC payback in months (spec §6): acquisition cost divided by the monthly
-    -- contribution margin it buys. Computed here rather than as a derived metric
-    -- because both inputs already live at this grain, and nullif keeps a
-    -- zero-or-negative-margin week from producing an infinite payback.
-    (spend_usd / nullif(new_subscriptions, 0))
-        / nullif(contribution_margin_per_subscription, 0) as cac_payback_months
+    -- contribution margin it buys. Expressed as the week's whole spend over the
+    -- week's whole margin rather than as cac divided by the per-subscription
+    -- average -- the two are equal at this grain, but only this form sums
+    -- correctly when the semantic layer rolls weeks or channels together.
+    -- nullif keeps a zero-or-negative-margin week from producing an infinite
+    -- payback.
+    spend_usd / nullif(total_contribution_margin_usd, 0) as cac_payback_months
 from joined
