@@ -9,13 +9,21 @@ Built from the semantic-layer metric exports in this directory
 ## Views
 
 1. Launch pulse — cumulative and weekly new subscriptions, attach rate trend
-   (national and by region)
+   (national and by region), and attach rate against the launch target
+   (`attach_rate_vs_target`, where 1.0 is exactly on plan)
 2. Activation — 7-day digital, kit SLA, and combined 30-day activation rates
    over time, with the mature cohort size behind each rate
 3. Kit operations — on-time delivery rate by state
 4. Acquisition efficiency — CAC and cost per activated account by channel,
    win rate by state
-5. Customer Success queue — at-risk accounts split by failure driver
+5. Customer Success queue — at-risk account **counts** split by failure driver
+   (`control_at_risk_by_driver.csv`), and the at-risk **rate** by state
+   (`control_at_risk_by_state.csv`)
+
+`risk_driver` is assigned from the same flags that define `is_at_risk`, so the
+at-risk *rate* is 1.0 in every failure bucket by construction and carries no
+information there. The driver split is a count question; the rate belongs on a
+population cut such as state or channel. See METRICS.md for the full note.
 
 ## Reading the activation rates
 

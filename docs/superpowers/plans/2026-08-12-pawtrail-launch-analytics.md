@@ -2837,18 +2837,52 @@ already carries every input.
 Create `pawtrail_dbt/tests/assert_risk_driver_is_exhaustive.sql`:
 
 ```sql
--- Fails (returns rows) if an account carries a risk flag but lands in the
--- 'healthy' bucket, or is tagged with a driver outside the known set. The
--- driver column is what makes the queue actionable — an account routed to the
--- wrong team is worse than one that was never flagged.
-select account_id, risk_driver
-from {{ ref('fct_at_risk_accounts') }}
+-- Fails (returns rows) if an account's risk_driver is outside the known set, or
+-- disagrees with the flags it is supposed to summarise. The driver column is
+-- what makes the queue actionable — an account routed to the wrong team is
+-- worse than one that was never flagged — so checking only that the value is a
+-- member of the enum is not enough. Reordering the CASE arms in
+-- fct_at_risk_accounts so the digital leg is tested before the dual-failure arm
+-- would relabel every both_legs_failed account as digital_failure and send it
+-- to onboarding instead of logistics, and a membership-only test would pass.
+--
+-- The expectation below is written with explicit AND/NOT conditions rather than
+-- as an ordered fall-through, so it cannot inherit the same ordering bug it
+-- exists to catch: each arm is true for exactly one combination of flags.
+with expected as (
+    select
+        account_id,
+        risk_driver,
+        case
+            when no_digital_access_14d and kit_failed_sla
+                then 'both_legs_failed'
+            when kit_failed_sla and not no_digital_access_14d
+                then 'physical_failure'
+            when no_digital_access_14d and not kit_failed_sla
+                then 'digital_failure'
+            when no_tasks_completed
+                 and not no_digital_access_14d and not kit_failed_sla
+                then 'onboarding_gap'
+            else 'healthy'
+        end as expected_driver,
+        is_at_risk,
+        (no_digital_access_14d or kit_failed_sla or no_tasks_completed)
+            as expected_at_risk
+    from {{ ref('fct_at_risk_accounts') }}
+)
+
+select account_id, risk_driver, expected_driver
+from expected
 where risk_driver not in (
         'healthy', 'digital_failure', 'physical_failure',
         'both_legs_failed', 'onboarding_gap'
       )
-   or (risk_driver = 'healthy'
-       and (no_digital_access_14d or kit_failed_sla or no_tasks_completed))
+   or risk_driver is distinct from expected_driver
+   -- is_at_risk and the driver are derived from one set of flags; if they can
+   -- disagree, the queue size and the queue's routing came from different data.
+   or is_at_risk is distinct from expected_at_risk
+   or (is_at_risk and risk_driver = 'healthy')
+   or (not is_at_risk and risk_driver <> 'healthy')
 ```
 
 - [ ] **Step 2: Write the schema tests before the model exists**
@@ -3216,12 +3250,33 @@ semantic_models:
       # never logged in or never received a kit, and avg skips nulls, so these
       # read as "how fast for those who got there" rather than being dragged
       # toward zero by accounts that never arrived.
+      #
+      # Both are gated on the 30-day cohort for the same reason every activation
+      # rate is, and the gate matters more here than it looks. An account five
+      # days old can only contribute a value of five or less: its slow outcomes
+      # have not happened yet and enter the average as nulls, so the newest weeks
+      # report only their fastest cases and read faster than they are. The paired
+      # `<= 30` bound is what makes the gate sufficient — with a full 30-day
+      # window and a 30-day cap, no counted event can postdate the observation
+      # date, which is how 36 kit deliveries and 25 logins dated past the cutoff
+      # were reaching these averages. The cap costs almost nothing: 12 kits in
+      # the whole dataset arrive later than day 30. A tighter 14-day bound was
+      # tried and rejected — it truncates 148 genuinely late kits and pulls the
+      # average from 6.4 to 5.6, trading a small bias for a larger one.
       - name: avg_days_to_first_login
         agg: average
-        expr: days_to_first_login
+        expr: >-
+          case when is_mature_30d
+                    and days_to_first_login
+                        <= {{ var('combined_activation_window_days') }}
+               then days_to_first_login end
       - name: avg_days_to_kit_delivery
         agg: average
-        expr: days_to_kit_delivery
+        expr: >-
+          case when is_mature_30d
+                    and days_to_kit_delivery
+                        <= {{ var('combined_activation_window_days') }}
+               then days_to_kit_delivery end
       # First-cycle task engagement (spec §6, early engagement). Two different
       # questions: `tasks_completed` over `tasks_available` is how much of the
       # care plan got done, while `task_engaged_accounts` over the mature cohort
@@ -3875,14 +3930,23 @@ surfaces a real root-cause signal rather than just displaying numbers.
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
 mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
-mf query --metrics cumulative_subscriptions_to_date,attach_rate --group-by weekly_attach_row__signup_week --csv ../dashboard/control_attach_rate.csv
+# attach_rate_vs_target rides along with attach_rate: the launch target lives in
+# a dbt var precisely so it is never retyped into a Tableau reference line, and
+# that only pays off if the ratio-to-target reaches the export. Exporting the
+# rate alone leaves the dashboard unable to say whether the number is good.
+mf query --metrics cumulative_subscriptions_to_date,attach_rate,attach_rate_vs_target --group-by weekly_attach_row__signup_week --csv ../dashboard/control_attach_rate.csv
 mf query --metrics attach_rate --group-by weekly_attach_row__signup_week,weekly_attach_row__state --csv ../dashboard/control_attach_rate_by_state.csv
 mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_7d,activation_rate_14d,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
 mf query --metrics avg_days_to_first_login,avg_days_to_kit_delivery,conversion_lag_days --group-by metric_time__week --csv ../dashboard/control_time_to_milestone.csv
 mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_unit_economics.csv
 mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by account__state --csv ../dashboard/control_kit_sla_by_state.csv
 mf query --metrics cac_by_channel,cost_per_activated_account --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_cac_by_channel.csv
-mf query --metrics at_risk_account_rate,at_risk_accounts --group-by account__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
+# Count only. `risk_driver` is derived from the same three flags that define
+# `is_at_risk`, so within any non-healthy bucket the rate's numerator is its
+# own denominator and the column reads 1.0 by construction. The rate is a
+# real number grouped by state or channel; grouped by driver it is a tautology.
+mf query --metrics at_risk_accounts --group-by account__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
+mf query --metrics at_risk_account_rate,at_risk_accounts --group-by account__state --csv ../dashboard/control_at_risk_by_state.csv
 mf query --metrics win_rate --group-by pitch__state --csv ../dashboard/control_win_rate.csv
 cd ..
 ```
@@ -3931,11 +3995,11 @@ git commit -m "Define launch metrics in the semantic layer and export control qu
 
 Connect Tableau Public to the `control_*.csv` files in `dashboard/`. Build these views, matching spec §6's dashboard structure:
 
-1. **Launch pulse** — line chart of `control_weekly_new_subscriptions.csv` (weekly new subscriptions) and `control_attach_rate.csv` (cumulative subscriptions and national attach rate over time), with `control_attach_rate_by_state.csv` as the by-region breakdown.
+1. **Launch pulse** — line chart of `control_weekly_new_subscriptions.csv` (weekly new subscriptions) and `control_attach_rate.csv` (cumulative subscriptions, national attach rate, and `attach_rate_vs_target` over time), with `control_attach_rate_by_state.csv` as the by-region breakdown. Plot `attach_rate_vs_target` against a constant 1.0 rather than drawing a reference line at the raw target: the target lives in `var('attach_rate_launch_target')` so it cannot drift between the memo and the workbook, and that only holds if the dashboard reads the ratio instead of re-typing the target.
 2. **Activation** — bar/line chart of `control_activation_rates.csv` showing `digital_activation_rate_7d`, `kit_sla_rate`, and the `activation_rate_7d` / `activation_rate_14d` / `activation_rate_30d` progression over time. Plot `mature_cohort_size_30d` as a secondary axis or tooltip so a reader can see how many accounts each rate is computed on — the most recent weeks are deliberately excluded from the 30-day rate until their window closes, and a chart that hides that invites the reader to over-read a thin cohort.
 3. **Kit operations** — bar chart of `control_kit_sla_by_state.csv`, sorted ascending by `kit_on_time_delivery_rate`, so the injected problem state is visually the worst performer.
 4. **Acquisition efficiency** — chart of `control_cac_by_channel.csv` (CAC and cost-per-activated-account by channel over time) plus `control_win_rate.csv` broken out by state.
-5. **Customer Success queue** — bar chart of `control_at_risk_by_driver.csv` showing at-risk account counts split by `risk_driver` (`digital_failure`, `physical_failure`, `both_legs_failed`, `onboarding_gap`). This is the view that turns the analysis into an action list, and it is what makes the launch dashboard answer "who do we call on Monday" rather than only "how are we doing".
+5. **Customer Success queue** — bar chart of `control_at_risk_by_driver.csv` showing at-risk account **counts** split by `risk_driver` (`digital_failure`, `physical_failure`, `both_legs_failed`, `onboarding_gap`), plus `control_at_risk_by_state.csv` for the at-risk **rate** by state. This is the view that turns the analysis into an action list, and it is what makes the launch dashboard answer "who do we call on Monday" rather than only "how are we doing". Keep the rate off the driver chart: `risk_driver` is assigned from the same flags that define `is_at_risk`, so the rate is 1.0 in every failure bucket by construction and reads as an alarm while carrying no information. The rate is a population question and needs a cut whose denominator differs from its numerator.
 
 - [ ] **Step 2: Publish to Tableau Public**
 
@@ -3961,13 +4025,21 @@ Built from the semantic-layer metric exports in this directory
 ## Views
 
 1. Launch pulse — cumulative and weekly new subscriptions, attach rate trend
-   (national and by region)
+   (national and by region), and attach rate against the launch target
+   (`attach_rate_vs_target`, where 1.0 is exactly on plan)
 2. Activation — 7-day digital, kit SLA, and combined 30-day activation rates
    over time, with the mature cohort size behind each rate
 3. Kit operations — on-time delivery rate by state
 4. Acquisition efficiency — CAC and cost per activated account by channel,
    win rate by state
-5. Customer Success queue — at-risk accounts split by failure driver
+5. Customer Success queue — at-risk account **counts** split by failure driver
+   (`control_at_risk_by_driver.csv`), and the at-risk **rate** by state
+   (`control_at_risk_by_state.csv`)
+
+`risk_driver` is assigned from the same flags that define `is_at_risk`, so the
+at-risk *rate* is 1.0 in every failure bucket by construction and carries no
+information there. The driver split is a count question; the rate belongs on a
+population cut such as state or channel. See METRICS.md for the full note.
 
 ## Reading the activation rates
 
@@ -4276,7 +4348,7 @@ mf validate-configs
 mf query --metrics activation_rate_30d,kit_on_time_delivery_rate --group-by metric_time__week
 mf query --metrics cac_by_channel --group-by channel_week_row__signup_week,channel_week_row__channel
 mf query --metrics kit_on_time_delivery_rate --group-by account__state --order kit_on_time_delivery_rate
-mf query --metrics at_risk_account_rate --group-by account__risk_driver
+mf query --metrics at_risk_account_rate --group-by account__state
 cd ..
 ```
 

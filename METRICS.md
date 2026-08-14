@@ -208,6 +208,7 @@ Who Customer Success should call: the at-risk account count and rate.
 - **Definition:** Share of assessable accounts currently flagged at risk for the Customer Success team to intervene on.
 - **Formula:** `ratio` — `at_risk_accounts_count ÷ assessable_accounts`
 - **Source:** `at_risk_accounts` (`fct_at_risk_accounts`)
+- **Valid groupings:** by `account__state`, `account__channel`, or ungrouped. **Never by `account__risk_driver`** — see the semi-additivity note below.
 
 ### at_risk_accounts
 - **Definition:** Count of accounts currently flagged at risk — the size of the Customer Success outreach queue, typically read broken out by `risk_driver`.
@@ -245,6 +246,17 @@ would double-count cumulative subscriptions and multiply the eligible base by
 the number of weeks included. `attach_rate` is therefore valid grouped by
 week, or by week and region together, but must never be grouped by region
 alone.
+
+**`at_risk_account_rate` grouped by driver is a tautology.** `risk_driver` is
+assigned from the same three flags that define `is_at_risk`, so every account
+in a non-healthy bucket is at risk by construction and every account in the
+`healthy` bucket is not. Grouping the rate by `account__risk_driver` therefore
+returns `1.0` for each failure driver and `0.0` for `healthy` — a column that
+looks alarming and carries no information. The driver breakdown is a **count**
+question (`at_risk_accounts`, exported to `control_at_risk_by_driver.csv`); the
+rate is a **population** question and belongs on `account__state` or
+`account__channel`, where the denominator is a genuinely different set from the
+numerator (`control_at_risk_by_state.csv`).
 
 ---
 

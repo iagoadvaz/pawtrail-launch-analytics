@@ -5,7 +5,8 @@
 The launch is not healthy on the metric that matters most: activation. Volume
 and attach rate have grown steadily and predictably — cumulative subscriptions
 rose from 22 to 3,000 and attach rate from 0.1% to 20% across the
-seventeen-week window — but the mature-cohort 30-day activation rate, which
+seventeen-week window, finishing at **1.33x the 15% launch target** — but the
+mature-cohort 30-day activation rate, which
 held between 69.1% and 75.2% for eight straight weeks, dropped to 60.3% in the
 most recently completed cohort (signup week of March 30). That drop is not
 noise; it tracks a specific, worsening fulfillment failure that is consuming a
@@ -60,7 +61,7 @@ reportable as the cohort base matures — none is skipped for convenience.
 
 ## How These Numbers Are Counted
 
-Three choices affect every rate above. First, activation rates use the mature
+Four choices affect every rate above. First, activation rates use the mature
 cohort only: an account must have had the full 7/10/30-day window to be
 counted, so recent signups are excluded rather than scored as failures — this
 is why the 30-day rate covers far fewer accounts (136 in the March 30 cohort)
@@ -77,3 +78,13 @@ numerator against a partial one and overstate cost in exactly the newest
 weeks: the March 30 cohort reads $13.07 for self-serve on that basis and
 $16.60 on the naive one. The four most recent weeks have no mature accounts at
 all, so they carry no figure rather than a guessed one.
+
+Fourth, the time-to-milestone averages — days to first login and days to kit
+delivery — are held to the same 30-day cohort and capped at 30 days. Without
+the gate an account five days old can only contribute a value of five or less,
+because its slower outcome has not happened yet and enters the average as a
+null; the newest weeks then report only their fastest cases and read faster
+than they are. The cap costs almost nothing (twelve kits in the whole dataset
+arrive after day 30) and is what keeps events dated past the observation
+cutoff out of the average entirely. Like the activation rates, these two
+columns are blank for the four most recent weeks.

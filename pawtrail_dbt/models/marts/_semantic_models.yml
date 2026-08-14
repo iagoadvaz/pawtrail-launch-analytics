@@ -135,12 +135,33 @@ semantic_models:
       # never logged in or never received a kit, and avg skips nulls, so these
       # read as "how fast for those who got there" rather than being dragged
       # toward zero by accounts that never arrived.
+      #
+      # Both are gated on the 30-day cohort for the same reason every activation
+      # rate is, and the gate matters more here than it looks. An account five
+      # days old can only contribute a value of five or less: its slow outcomes
+      # have not happened yet and enter the average as nulls, so the newest weeks
+      # report only their fastest cases and read faster than they are. The paired
+      # `<= 30` bound is what makes the gate sufficient — with a full 30-day
+      # window and a 30-day cap, no counted event can postdate the observation
+      # date, which is how 36 kit deliveries and 25 logins dated past the cutoff
+      # were reaching these averages. The cap costs almost nothing: 12 kits in
+      # the whole dataset arrive later than day 30. A tighter 14-day bound was
+      # tried and rejected — it truncates 148 genuinely late kits and pulls the
+      # average from 6.4 to 5.6, trading a small bias for a larger one.
       - name: avg_days_to_first_login
         agg: average
-        expr: days_to_first_login
+        expr: >-
+          case when is_mature_30d
+                    and days_to_first_login
+                        <= {{ var('combined_activation_window_days') }}
+               then days_to_first_login end
       - name: avg_days_to_kit_delivery
         agg: average
-        expr: days_to_kit_delivery
+        expr: >-
+          case when is_mature_30d
+                    and days_to_kit_delivery
+                        <= {{ var('combined_activation_window_days') }}
+               then days_to_kit_delivery end
       # First-cycle task engagement (spec §6, early engagement). Two different
       # questions: `tasks_completed` over `tasks_available` is how much of the
       # care plan got done, while `task_engaged_accounts` over the mature cohort
