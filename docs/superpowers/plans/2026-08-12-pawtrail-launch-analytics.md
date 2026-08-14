@@ -3929,25 +3929,31 @@ surfaces a real root-cause signal rather than just displaying numbers.
 ```bash
 cd pawtrail_dbt
 export DBT_PROFILES_DIR="$PWD"
-mf query --metrics weekly_new_subscriptions --group-by metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
+# Every export carries --order on its full group-by key. MetricFlow does not
+# guarantee row order otherwise, so re-running this block reshuffles the CSVs
+# and produces a diff on every line of every file with no change in the data.
+# That noise is not cosmetic: it hides the one export that genuinely moved
+# behind ten that did not, and it defeats the Task 20 Step 5 drift check, whose
+# whole premise is that identical inputs reproduce identical files.
+mf query --metrics weekly_new_subscriptions --group-by metric_time__week --order metric_time__week --csv ../dashboard/control_weekly_new_subscriptions.csv
 # attach_rate_vs_target rides along with attach_rate: the launch target lives in
 # a dbt var precisely so it is never retyped into a Tableau reference line, and
 # that only pays off if the ratio-to-target reaches the export. Exporting the
 # rate alone leaves the dashboard unable to say whether the number is good.
-mf query --metrics cumulative_subscriptions_to_date,attach_rate,attach_rate_vs_target --group-by weekly_attach_row__signup_week --csv ../dashboard/control_attach_rate.csv
-mf query --metrics attach_rate --group-by weekly_attach_row__signup_week,weekly_attach_row__state --csv ../dashboard/control_attach_rate_by_state.csv
-mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_7d,activation_rate_14d,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --csv ../dashboard/control_activation_rates.csv
-mf query --metrics avg_days_to_first_login,avg_days_to_kit_delivery,conversion_lag_days --group-by metric_time__week --csv ../dashboard/control_time_to_milestone.csv
-mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_unit_economics.csv
-mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by account__state --csv ../dashboard/control_kit_sla_by_state.csv
-mf query --metrics cac_by_channel,cost_per_activated_account --group-by channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_cac_by_channel.csv
+mf query --metrics cumulative_subscriptions_to_date,attach_rate,attach_rate_vs_target --group-by weekly_attach_row__signup_week --order weekly_attach_row__signup_week --csv ../dashboard/control_attach_rate.csv
+mf query --metrics attach_rate --group-by weekly_attach_row__signup_week,weekly_attach_row__state --order weekly_attach_row__signup_week,weekly_attach_row__state --csv ../dashboard/control_attach_rate_by_state.csv
+mf query --metrics digital_activation_rate_7d,kit_sla_rate,activation_rate_7d,activation_rate_14d,activation_rate_30d,mature_cohort_size_30d --group-by metric_time__week --order metric_time__week --csv ../dashboard/control_activation_rates.csv
+mf query --metrics avg_days_to_first_login,avg_days_to_kit_delivery,conversion_lag_days --group-by metric_time__week --order metric_time__week --csv ../dashboard/control_time_to_milestone.csv
+mf query --metrics incremental_mrr,arpa,cac_payback_months --group-by channel_week_row__signup_week,channel_week_row__channel --order channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_unit_economics.csv
+mf query --metrics kit_on_time_delivery_rate,kit_lost_rate --group-by account__state --order account__state --csv ../dashboard/control_kit_sla_by_state.csv
+mf query --metrics cac_by_channel,cost_per_activated_account --group-by channel_week_row__signup_week,channel_week_row__channel --order channel_week_row__signup_week,channel_week_row__channel --csv ../dashboard/control_cac_by_channel.csv
 # Count only. `risk_driver` is derived from the same three flags that define
 # `is_at_risk`, so within any non-healthy bucket the rate's numerator is its
 # own denominator and the column reads 1.0 by construction. The rate is a
 # real number grouped by state or channel; grouped by driver it is a tautology.
-mf query --metrics at_risk_accounts --group-by account__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
-mf query --metrics at_risk_account_rate,at_risk_accounts --group-by account__state --csv ../dashboard/control_at_risk_by_state.csv
-mf query --metrics win_rate --group-by pitch__state --csv ../dashboard/control_win_rate.csv
+mf query --metrics at_risk_accounts --group-by account__risk_driver --order account__risk_driver --csv ../dashboard/control_at_risk_by_driver.csv
+mf query --metrics at_risk_account_rate,at_risk_accounts --group-by account__state --order account__state --csv ../dashboard/control_at_risk_by_state.csv
+mf query --metrics win_rate --group-by pitch__state --order pitch__state --csv ../dashboard/control_win_rate.csv
 cd ..
 ```
 

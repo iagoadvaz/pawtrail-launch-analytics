@@ -1,5 +1,5 @@
 account__risk_driver,at_risk_accounts
-healthy,0
 both_legs_failed,96
 digital_failure,496
+healthy,0
 physical_failure,352
