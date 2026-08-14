@@ -1394,7 +1394,12 @@ Expected: 1 passed.
 - [ ] **Step 5: Generate the real seed files for the project**
 
 ```bash
-python generator/build_seeds.py
+# Run as a module, not a script path: build_seeds.py imports across sibling
+# packages (generator.*, data.olist_reference.*), which only resolves if the
+# repo root is on sys.path. `python -m` adds the current working directory
+# to sys.path automatically; `python generator/build_seeds.py` does not, and
+# fails with `ModuleNotFoundError: No module named 'data'` on a clean shell.
+python -m generator.build_seeds
 ls pawtrail_dbt/seeds/
 ```
 
@@ -3975,7 +3980,7 @@ pip install -r requirements.txt
 python data/olist_reference/fetch_olist_reference_distributions.py
 
 # 2. Generate synthetic PawTrail data
-python generator/build_seeds.py
+python -m generator.build_seeds
 
 # 3. Build and test the dbt project
 cd pawtrail_dbt
@@ -4173,7 +4178,7 @@ Expected: every test from Tasks 2–6 passes.
 - [ ] **Step 3: Rebuild the seeds and the full dbt project**
 
 ```bash
-python generator/build_seeds.py
+python -m generator.build_seeds
 cd pawtrail_dbt
 dbt seed --profiles-dir .
 dbt build --profiles-dir .

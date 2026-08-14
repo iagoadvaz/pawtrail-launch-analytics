@@ -48,7 +48,7 @@ pip install -r requirements.txt
 python data/olist_reference/fetch_olist_reference_distributions.py
 
 # 2. Generate synthetic PawTrail data
-python generator/build_seeds.py
+python -m generator.build_seeds
 
 # 3. Build and test the dbt project
 cd pawtrail_dbt
