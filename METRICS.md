@@ -5,6 +5,22 @@ This is a human-readable companion to the MetricFlow semantic layer defined in
 `pawtrail_dbt/models/marts/_semantic_models.yml` (8 semantic models). Every
 metric below is queryable via `mf query --metrics <name>`.
 
+**`mf list metrics` returns 62 names, not 33.** The 29 extras are not
+undocumented metrics; they are the measures behind the 33, exposed as
+queryable names by `create_metric: true` on their declarations —
+`mature_accounts_30d`, `kits_shipped`, `channel_spend_usd`, `pitches_won` and
+so on. They exist because a ratio metric here often wants its own denominator
+on the chart beside it: `mature_cohort_size_30d` is only meaningful next to
+`activation_rate_30d`, and a reader who cannot see the base cannot judge the
+rate. Two things follow. Each one is a raw measure with no interpretation
+attached, so the definition that governs it is the metric it serves, listed
+below. And the 33 documented names are the curated set — the ones with a
+stated definition, formula, and assumptions — so a number that reaches a memo,
+a CSV export, or a decision threshold should come from this list. The split is
+enforced by `semantic_tests/test_metrics_documentation.py`, which fails if a
+declared metric loses its entry here or if a new measure proxy appears
+undisclosed.
+
 Formulas use `÷` for `numerator / denominator` on `ratio` metrics, cite the
 underlying measure for `simple` metrics, and spell out the expression for
 `derived` metrics. "Source semantic model" is the semantic model that owns the
@@ -69,6 +85,7 @@ plus early-warning zero-engagement counts.
 - **Definition:** The share of accounts with a full SLA window whose physical kit was activated within the 10-day delivery SLA.
 - **Formula:** `ratio` — `kit_activated_accounts ÷ mature_accounts_sla`
 - **Source:** `activation_events`
+- **Note:** Numerically identical to `kit_on_time_delivery_rate` (both 0.8454204971058904), and identical **by construction**, not by coincidence: the two ratios reduce to the same `kit_activated_sla ÷ is_mature_sla` over the same population, reached through two semantic models. They are kept apart because they answer to different readers — this one is the physical leg of the activation funnel, sitting beside the digital rate in `control_activation_rates.csv`; the other is the fulfilment scorecard, sitting beside loss and lateness in `control_kit_sla_by_state.csv`. Treat them as one number with two homes, never as corroboration of each other.
 
 ### activation_rate_7d
 - **Definition:** The share of accounts with a full 7-day combined window that activated on both the digital and physical (kit-SLA) legs within 7 days.
@@ -91,13 +108,15 @@ plus early-warning zero-engagement counts.
 - **Source:** `activation_events`
 
 ### avg_days_to_first_login
-- **Definition:** Average number of days from signup to first digital login, among accounts that ever logged in.
-- **Formula:** `simple` — measure `avg_days_to_first_login` (average of `days_to_first_login`; nulls for accounts that never logged in are skipped).
+- **Definition:** Average number of days from signup to first digital login, among **30-day-mature** accounts that logged in **within 30 days**. Accounts that never logged in are skipped rather than counted as slow, so this reads "how fast for those who got there".
+- **Formula:** `simple` — measure `avg_days_to_first_login` (`average` of `days_to_first_login` where `is_mature_30d and days_to_first_login <= 30`; nulls are skipped).
+- **Assumption:** Both bounds are load-bearing and neither is cosmetic. Without the maturity gate a five-day-old account can only contribute a value of five or less — its slow outcomes have not happened yet and enter as nulls — so the newest weeks would report only their fastest cases and read faster than they are. The paired 30-day cap is what makes the gate sufficient: with a full window and a matching cap, no counted event can postdate the observation date. Read it as a bounded statistic, not as the unconditional mean: the 19.7% of accounts that never log in are outside it by construction, so it **improves as onboarding gets worse**. `zero_digital_access_accounts` is the metric that sees them.
 - **Source:** `activation_events`
 
 ### avg_days_to_kit_delivery
-- **Definition:** Average number of days from signup to first kit delivered, among accounts whose kit arrived.
-- **Formula:** `simple` — measure `avg_days_to_kit_delivery` (average of `days_to_kit_delivery`; nulls for undelivered kits are skipped).
+- **Definition:** Average number of days from signup to first kit delivered, among **30-day-mature** accounts whose kit arrived **within 30 days**.
+- **Formula:** `simple` — measure `avg_days_to_kit_delivery` (`average` of `days_to_kit_delivery` where `is_mature_30d and days_to_kit_delivery <= 30`; nulls are skipped).
+- **Assumption:** Same pair of bounds, for the same reason, and the cap costs almost nothing here — 12 kits in the whole dataset arrive later than day 30. A tighter 14-day bound was tried and rejected: it truncates 148 genuinely late kits and pulls the average from 6.4 to 5.6, trading a small bias for a larger one. Lost and undelivered kits are outside this metric entirely; `kit_lost_rate` and `kit_late_rate` are where they show up.
 - **Source:** `activation_events`
 
 ### conversion_lag_days
@@ -135,6 +154,7 @@ Physical fulfillment performance: on-time delivery, loss, and lateness.
 - **Definition:** Share of shipped kits delivered within the 10-day SLA.
 - **Formula:** `ratio` — `kits_on_time ÷ kits_shipped`
 - **Source:** `kit_deliveries` (`fct_kit_deliveries`)
+- **Note:** The same number as `kit_sla_rate`, by construction — see the note there.
 
 ### kit_lost_rate
 - **Definition:** Share of shipped kits that were lost in transit and never arrived.
@@ -197,6 +217,7 @@ performance.
 - **Definition:** Estimated number of months to recover customer acquisition cost out of contribution margin — total spend over total monthly contribution margin. Not the average of each week's own payback: the launch's first weeks carry a handful of subscriptions and payback figures in the tens of months, and weighting those equally with weeks carrying a hundred or more reports roughly four times the true figure.
 - **Formula:** `ratio` — `channel_spend_usd ÷ channel_total_contribution_margin_usd`
 - **Source:** `weekly_channel_economics`
+- **Assumption:** Contribution margin is `monthly_price − kit_cogs − shipping_cost`, which charges the kit and its shipping — **one-time** costs, incurred once at fulfilment — against **every** month. Payback is therefore conservative: it is the number of months to recover CAC if the kit had to be re-bought monthly, so the true figure is shorter than the one reported here. The alternative, amortising fulfilment across an assumed lifetime, needs a retention curve this launch window cannot supply — twelve-month churn is one of the metrics deferred for exactly that reason — so the assumption is stated rather than modelled.
 
 ---
 

@@ -28,7 +28,9 @@ population cut such as state or channel. See METRICS.md for the full note.
 ## Reading the activation rates
 
 Activation rates are computed on the **mature cohort** only: accounts that have
-had the full window (7, 10, or 30 days) to activate. Recent signups are excluded
+had the full window (7, 10, 14, or 30 days) to activate — the 14-day combined
+rate ships as `activation_rate_14d` in `control_activation_rates.csv` alongside
+the other three. Recent signups are excluded
 from the denominator until their window closes rather than being counted as
 failures, so the most recent weeks show a smaller cohort rather than an
 artificially collapsing rate.

@@ -4421,7 +4421,9 @@ population cut such as state or channel. See METRICS.md for the full note.
 ## Reading the activation rates
 
 Activation rates are computed on the **mature cohort** only: accounts that have
-had the full window (7, 10, or 30 days) to activate. Recent signups are excluded
+had the full window (7, 10, 14, or 30 days) to activate — the 14-day combined
+rate ships as `activation_rate_14d` in `control_activation_rates.csv` alongside
+the other three. Recent signups are excluded
 from the denominator until their window closes rather than being counted as
 failures, so the most recent weeks show a smaller cohort rather than an
 artificially collapsing rate.
@@ -4544,7 +4546,25 @@ retention data this launch window doesn't have yet. See
 §2 and §6 for the reasoning.
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Add the documentation consistency tests**
+
+Create `semantic_tests/test_metrics_documentation.py`. Counts in prose are this
+project's most-repeated defect — a stale metric total and a self-contradicting
+"6 CSV files / 8 CSV files" claim both shipped — and both were mechanical to
+catch and easy to miss by re-reading. The tests assert that every metric in
+`_metrics.yml` has an entry here, that no entry outlives its metric, and that
+both stated counts match what they count.
+
+```bash
+.venv/bin/python -m pytest semantic_tests/test_metrics_documentation.py -q
+```
+
+Expected: 4 passed, in well under a second — these parse files and never touch
+the warehouse. They are guards rather than a red-green cycle, so verify they can
+fail before trusting them: change the stated count by one, rename a `###`
+heading, and confirm the suite goes red on each.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add README.md
@@ -4557,6 +4577,7 @@ git commit -m "Add project README"
 
 **Files:**
 - Create: `METRICS.md`
+- Create: `semantic_tests/test_metrics_documentation.py`
 
 **Interfaces:**
 - Consumes: every metric defined in Task 15's `_metrics.yml`.
@@ -4570,6 +4591,32 @@ definition, formula (numerator/denominator or measure), and which
 semantic model(s) it draws from. Structure the document in the same five
 categories used in the dashboard (Task 16): Launch pulse, Activation, Kit
 operations, Acquisition efficiency, Customer Success queue.
+
+Four entries need more than a definition, because the number alone misleads a
+reader who takes it at face value. Add an **Assumption** or **Note** line to
+each:
+
+- **`avg_days_to_first_login` and `avg_days_to_kit_delivery`** are gated on
+  `is_mature_30d` **and** capped at 30 days, and the definition has to say so —
+  it is not the unconditional mean it reads as. State that the login average
+  improves as onboarding gets worse, since accounts that never log in leave the
+  numerator entirely, and point the reader at `zero_digital_access_accounts`,
+  which is the metric that sees them.
+- **`kit_sla_rate` and `kit_on_time_delivery_rate`** are the same number
+  (0.8454204971058904) reached through two semantic models, identical by
+  construction rather than by coincidence. Both are kept because they serve
+  different readers and different exports, so say plainly that they are one
+  number with two homes and must never be read as corroborating each other.
+- **`cac_payback_months`** charges one-time kit COGS and shipping against every
+  month, so the figure is conservative — the assumption spec §1.2(a) exists to
+  fix. Declare it rather than modelling it: amortising fulfilment needs a
+  retention curve this launch window cannot supply.
+
+Open the document by disclosing that `mf list metrics` returns 62 names against
+the 33 documented here. The 29 extras are the measures behind those 33, exposed
+by `create_metric: true` so a ratio can be charted beside its own denominator.
+Say which set governs: the documented 33 are the curated names, and a number
+reaching a memo, an export, or a decision threshold should come from them.
 
 Include a **Definitions that carry a judgement call** section documenting the
 three choices where a defensible alternative exists, since these are what an
@@ -4621,7 +4668,7 @@ launch simulation does not produce, not that it was judged unimportant.
 - [ ] **Step 2: Commit**
 
 ```bash
-git add METRICS.md
+git add METRICS.md semantic_tests/test_metrics_documentation.py
 git commit -m "Add human-readable metrics dictionary"
 ```
 
@@ -4673,7 +4720,7 @@ methodology choices a reader would otherwise have to reverse-engineer, both of
 which are the kind of judgement the memo exists to demonstrate:
 
 - Activation rates use the mature cohort only — accounts that have had the full
-  7/10/30-day window. Recent signups are excluded rather than counted as
+  7/10/14/30-day window. Recent signups are excluded rather than counted as
   failures, which is why the 30-day rate covers fewer accounts than the total
   subscriber count.
 - Combined activation requires an **on-time** kit, not merely a delivered one.

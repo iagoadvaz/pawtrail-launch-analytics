@@ -62,7 +62,7 @@ reportable as the cohort base matures — none is skipped for convenience.
 ## How These Numbers Are Counted
 
 Four choices affect every rate above. First, activation rates use the mature
-cohort only: an account must have had the full 7/10/30-day window to be
+cohort only: an account must have had the full 7/10/14/30-day window to be
 counted, so recent signups are excluded rather than scored as failures — this
 is why the 30-day rate covers far fewer accounts (136 in the March 30 cohort)
 than total subscribers that week, and why the four most recent weeks show no
