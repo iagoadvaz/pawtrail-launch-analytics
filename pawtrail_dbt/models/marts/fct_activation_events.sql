@@ -15,5 +15,9 @@ select
     is_mature_30d,
     is_mature_combined_7d,
     is_mature_combined_14d,
+    -- The maturity gate for zero_digital_access_accounts. Carried separately
+    -- from is_mature_combined_14d because the question is purely digital: see
+    -- the comment on the measure in _semantic_models.yml.
+    is_mature_no_login_14d,
     care_tasks_completed_first_cycle
 from {{ ref('int_activation_funnel') }}

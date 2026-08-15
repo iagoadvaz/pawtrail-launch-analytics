@@ -116,7 +116,7 @@ plus early-warning zero-engagement counts.
 - **Source:** `activation_events`
 
 ### zero_digital_access_accounts
-- **Definition:** Count of mature (14-day combined-window) accounts that had zero digital access in the first 14 days — an early-warning failure count.
+- **Definition:** Count of accounts observed for at least the 14-day no-login window that had zero digital access in those 14 days — an early-warning failure count. The maturity gate follows `at_risk_no_login_days`, the same var the flag itself uses, so a change to the kit SLA cannot move the population of a metric that never asks about kits.
 - **Formula:** `simple` — measure `zero_digital_access_accounts`.
 - **Source:** `activation_events`
 
@@ -142,12 +142,12 @@ Physical fulfillment performance: on-time delivery, loss, and lateness.
 - **Source:** `kit_deliveries`
 
 ### kit_late_rate
-- **Definition:** Share of shipped kits that did arrive, but arrived late (i.e. missed the SLA without being lost).
+- **Definition:** Share of shipped kits that missed the SLA without being lost. A kit counts as late once its SLA window has closed with no on-time delivery, whether or not it has arrived yet — lateness is a property of the promise, so it is knowable at the deadline and does not wait on the delivery date.
 - **Formula:** `ratio` — `kits_late ÷ kits_shipped`
 - **Source:** `kit_deliveries`
 
 ### avg_delivery_delay_days
-- **Definition:** Average number of days late, counted only among kits that actually arrived late — "when a kit is late, how late," not diluted by the on-time majority.
+- **Definition:** Average number of days late among kits that arrived late **and had arrived by the observation date** — "when a kit is late, how late," not diluted by the on-time majority. Unlike `kit_late_rate`, a delay is a magnitude rather than a fact, so it cannot be read off a kit still in transit. The figure is censored on that account and reads slightly low: 5.82 days over the 367 delays observed by the cutoff, against 5.95 if the 13 unobserved ones are counted at the duration they eventually reach.
 - **Formula:** `simple` — measure `avg_days_late`.
 - **Source:** `kit_deliveries`
 

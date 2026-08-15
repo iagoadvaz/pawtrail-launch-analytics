@@ -11,6 +11,11 @@ select
     -- fleet-wide average that moves with volume rather than with lateness.
     f.days_late,
     f.kit_activated_sla,
+    -- The SLA window closed with no on-time kit. Carried alongside days_late
+    -- rather than derived from it: days_late is null while a late kit is still
+    -- in transit, so a count built on it would undercount lateness at exactly
+    -- the observation boundary.
+    f.kit_late_sla,
     -- Carried so the on-time rate can exclude accounts whose SLA window has not
     -- closed yet, matching the cohort treatment of the activation rates.
     f.is_mature_sla

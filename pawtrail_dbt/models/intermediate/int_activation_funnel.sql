@@ -76,10 +76,30 @@ flagged as (
         (days_observed >= greatest(
             {{ var('combined_activation_mid_window_days') }}, {{ var('kit_sla_days') }}
         )) as is_mature_combined_14d,
-        -- Days past the SLA, null when the kit arrived on time or never came.
-        -- Feeds the delay-distribution metric (spec §6, kit operations).
+        -- Maturity for the purely digital "never logged in" question, gated on
+        -- the same var the flag itself uses. no_digital_access_14d asks only
+        -- whether a login happened, so nothing about the kit belongs in its
+        -- maturity test: is_mature_combined_14d would have worked today only
+        -- because kit_sla_days (10) is currently below the login window (14).
+        -- Raise the kit SLA to 20 and a digital metric would silently stop
+        -- counting accounts aged 14-19 whose digital question was fully
+        -- answerable. dbt_project.yml states these vars are independent; this
+        -- flag is what makes that true rather than coincidental.
+        (days_observed >= {{ var('at_risk_no_login_days') }}) as is_mature_no_login_14d,
+        -- Days past the SLA, null when the kit arrived on time, never came, or
+        -- has not arrived yet as of the observation date. Feeds the
+        -- delay-distribution metric (spec §6, kit operations).
+        --
+        -- The cutoff condition is what keeps the *magnitude* honest. The
+        -- generator emits delivery dates past observation_date, and a delay
+        -- computed from one of them is a number nobody could know yet -- it
+        -- reported "when a kit is late, how late" over 13 delays that had not
+        -- been observed. Lateness itself needs no delivery date and is carried
+        -- separately as kit_late_sla below, so gating here censors the duration
+        -- without losing the fact.
         case
             when kit_delivered_date is not null
+                 and kit_delivered_date <= observation_date
                  and not kit_lost
                  and days_to_kit_delivery > {{ var('kit_sla_days') }}
             then days_to_kit_delivery - {{ var('kit_sla_days') }}
@@ -112,5 +132,18 @@ select
         first_login_date is not null
         and days_to_first_login <= {{ var('combined_activation_mid_window_days') }}
         and kit_activated_sla
-    ) as combined_activated_14d
+    ) as combined_activated_14d,
+    -- Late as of the observation date: the SLA window has closed and no kit
+    -- arrived on time. Stated this way it needs no delivery date, so it is
+    -- answerable for a kit still in transit -- which is the honest reading,
+    -- since a kit that has already missed its promise is late whether or not
+    -- anyone knows when it will finally land. Deriving lateness from
+    -- `days_late is not null` instead made the count depend on a future
+    -- delivery date for 6 accounts; it reached the same answer for them, but
+    -- only by reading data the cutoff says does not exist yet.
+    --
+    -- With kit_activated_sla and kit_lost this partitions the mature cohort
+    -- exactly (2,483 + 373 + 81 = 2,937), which
+    -- assert_kit_outcome_taxonomy_partitions_the_mature_cohort enforces.
+    (is_mature_sla and not kit_lost and not kit_activated_sla) as kit_late_sla
 from flagged

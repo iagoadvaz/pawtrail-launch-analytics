@@ -123,9 +123,16 @@ semantic_models:
         create_metric: true
       # Early risk counts (spec §6). Both are restricted to accounts old enough
       # to be judged, for the same reason the activation rates are.
+      # Gated on is_mature_no_login_14d, which follows at_risk_no_login_days --
+      # the same var the flag itself uses. is_mature_combined_14d was the wrong
+      # gate for a purely digital question: it is the later of the 14-day
+      # activation window and the *kit* SLA, so a change to kit_sla_days would
+      # silently move the population of a metric that never asks about kits.
+      # Both currently resolve to 14 days, so this changes no number today; it
+      # stops the agreement from being a coincidence.
       - name: zero_digital_access_accounts
         agg: sum
-        expr: case when no_digital_access_14d and is_mature_combined_14d then 1 else 0 end
+        expr: case when no_digital_access_14d and is_mature_no_login_14d then 1 else 0 end
       - name: zero_task_accounts
         agg: sum
         expr: >-
@@ -232,13 +239,22 @@ semantic_models:
       # Delay distribution (spec §6, kit operations). days_late is null for
       # on-time and lost kits, and `average` skips nulls, so this answers "when
       # a kit is late, how late" rather than diluting the figure with the
-      # on-time majority.
+      # on-time majority. It is also null for a kit that is late but had not
+      # arrived by the observation date: that delay has not been observed, so it
+      # cannot be averaged. The figure is therefore censored, and reads slightly
+      # low against the eventual truth -- 5.82 days here against 5.95 if the
+      # unobserved deliveries are counted at their future duration.
       - name: avg_days_late
         agg: average
         expr: days_late
+      # Counted from kit_late_sla, not from `days_late is not null`. The two
+      # agree on this seed, but only the former is answerable at the cutoff: a
+      # kit whose SLA has expired is late whether or not it has arrived, and
+      # deriving the count from a delivery-date arithmetic made 6 of the 373
+      # depend on a delivery dated after the observation date.
       - name: kits_late
         agg: sum
-        expr: case when days_late is not null and is_mature_sla then 1 else 0 end
+        expr: case when kit_late_sla then 1 else 0 end
         create_metric: true
 
   - name: weekly_attach

@@ -12,7 +12,16 @@ flagged as (
         days_observed,
         no_digital_access_14d,
         (kit_lost or kit_delivered_date is null or not kit_activated_sla) as kit_failed_sla,
-        (coalesce(care_tasks_completed_first_cycle, 0) = 0) as no_tasks_completed
+        -- Gated on the 30-day cohort, not on this model's own 14-day floor.
+        -- care_tasks_completed_first_cycle counts tasks across the whole first
+        -- cycle, so an account 14 days old still has half of it left; judging it
+        -- here would book an unfinished cycle as a failed one. It also has to
+        -- match the zero_task_accounts KPI exactly -- one concept with two
+        -- consumers, and while the queue used 14 days and the KPI 30 they named
+        -- 467 accounts against 430. assert_zero_task_flag_matches_the_kpi_definition
+        -- fails if they diverge again.
+        (is_mature_30d and coalesce(care_tasks_completed_first_cycle, 0) = 0)
+            as no_tasks_completed
     from funnel
     -- Only accounts that have actually had the chance to fail. Flagging a
     -- two-day-old signup as "no digital access in 14 days" would fill the CS

@@ -1576,13 +1576,14 @@ git commit -m "Add core staging models with test-first schema tests"
 **Files:**
 - Create: `pawtrail_dbt/tests/assert_digital_activation_requires_login_date.sql`
 - Create: `pawtrail_dbt/tests/assert_signup_never_after_observation_date.sql`
+- Create: `pawtrail_dbt/tests/assert_days_late_never_reads_a_future_delivery.sql`
 - Create: `pawtrail_dbt/tests/assert_combined_activation_requires_on_time_kit.sql`
 - Create: `pawtrail_dbt/models/intermediate/_intermediate__models.yml`
 - Create: `pawtrail_dbt/models/intermediate/int_activation_funnel.sql`
 
 **Interfaces:**
 - Consumes: `stg_subscriptions`, `stg_kit_deliveries`, `stg_digital_engagement` from Task 7.
-- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date, observation_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, days_late, days_observed, digital_activated_7d, kit_activated_sla, no_digital_access_14d, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, combined_activated_7d, combined_activated_14d, combined_activated_30d)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` and by every `combined_activated_*` flag instead of being recomputed.
+- Produces: `int_activation_funnel(account_id, state, pet_tier, channel, premium_tenure_days, pawtrail_signup_date, observation_date, first_login_date, care_tasks_completed_first_cycle, kit_delivered_date, kit_lost, days_to_first_login, days_to_kit_delivery, days_late, days_observed, digital_activated_7d, kit_activated_sla, no_digital_access_14d, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, is_mature_no_login_14d, combined_activated_7d, combined_activated_14d, combined_activated_30d, kit_late_sla)` — `kit_activated_sla` is the single source of truth for "was the kit delivered on time," reused by Task 10's `fct_kit_deliveries` and by every `combined_activated_*` flag instead of being recomputed.
 - **Cohort maturity:** the `is_mature_*` flags mark accounts that have had the full activation window to succeed or fail. Every activation rate in Task 15 is restricted to the matching mature cohort, so recent signups are not silently counted as failures.
 
 - [ ] **Step 1: Write the singular test before the model exists (red step)**
@@ -1627,6 +1628,44 @@ where (combined_activated_30d or combined_activated_14d or combined_activated_7d
 All three horizons are checked, not just the North Star. The 7- and 14-day
 variants shorten the digital window only; if a later edit ever relaxes their
 physical leg to "delivered within N days", this test is what catches it.
+
+Create `pawtrail_dbt/tests/assert_days_late_never_reads_a_future_delivery.sql`:
+
+```sql
+-- Fails (returns rows) if days_late was computed from a delivery that had not
+-- happened yet as of the observation date.
+--
+-- int_activation_funnel declares observation_date as the analysis cutoff -- "in
+-- a scheduled pipeline this would be current_date" -- and every maturity flag is
+-- measured against it. The generator applies no such cutoff to the events
+-- themselves, so kit_delivered_date runs past it for some accounts. A days_late
+-- computed from one of those dates is a magnitude nobody could know yet, and it
+-- flows straight into avg_days_late, which reports "when a kit is late, how
+-- late" over delays that have not been observed.
+--
+-- The sibling of assert_signup_never_after_observation_date, which enforces the
+-- same cutoff in the other direction. Lateness itself is knowable without the
+-- delivery date -- once the SLA window has closed and no kit has arrived, the
+-- kit is late -- which is what kit_late_sla is for; this test constrains only
+-- the *duration*, the part that genuinely requires the delivery to have landed.
+select
+    account_id,
+    pawtrail_signup_date,
+    observation_date,
+    kit_delivered_date,
+    days_late
+from {{ ref('int_activation_funnel') }}
+where days_late is not null
+  and kit_delivered_date > observation_date
+```
+
+Note the asymmetry this test encodes, because it is the whole reason the model
+carries both `days_late` and `kit_late_sla`. Whether a kit is late is knowable
+the moment its SLA window closes; how late it is is not knowable until it
+arrives. Gating both on the delivery date would drop 6 kits that had already
+missed their promise out of the late *count*, understating the rate at exactly
+the observation boundary; gating neither lets 13 unobserved delays into the
+*average*. They are different questions and take different cutoffs.
 
 - [ ] **Step 2: Write the schema tests before the model exists**
 
@@ -1752,10 +1791,30 @@ flagged as (
         (days_observed >= greatest(
             {{ var('combined_activation_mid_window_days') }}, {{ var('kit_sla_days') }}
         )) as is_mature_combined_14d,
-        -- Days past the SLA, null when the kit arrived on time or never came.
-        -- Feeds the delay-distribution metric (spec §6, kit operations).
+        -- Maturity for the purely digital "never logged in" question, gated on
+        -- the same var the flag itself uses. no_digital_access_14d asks only
+        -- whether a login happened, so nothing about the kit belongs in its
+        -- maturity test: is_mature_combined_14d would have worked today only
+        -- because kit_sla_days (10) is currently below the login window (14).
+        -- Raise the kit SLA to 20 and a digital metric would silently stop
+        -- counting accounts aged 14-19 whose digital question was fully
+        -- answerable. dbt_project.yml states these vars are independent; this
+        -- flag is what makes that true rather than coincidental.
+        (days_observed >= {{ var('at_risk_no_login_days') }}) as is_mature_no_login_14d,
+        -- Days past the SLA, null when the kit arrived on time, never came, or
+        -- has not arrived yet as of the observation date. Feeds the
+        -- delay-distribution metric (spec §6, kit operations).
+        --
+        -- The cutoff condition is what keeps the *magnitude* honest. The
+        -- generator emits delivery dates past observation_date, and a delay
+        -- computed from one of them is a number nobody could know yet -- it
+        -- reported "when a kit is late, how late" over 13 delays that had not
+        -- been observed. Lateness itself needs no delivery date and is carried
+        -- separately as kit_late_sla below, so gating here censors the duration
+        -- without losing the fact.
         case
             when kit_delivered_date is not null
+                 and kit_delivered_date <= observation_date
                  and not kit_lost
                  and days_to_kit_delivery > {{ var('kit_sla_days') }}
             then days_to_kit_delivery - {{ var('kit_sla_days') }}
@@ -1788,7 +1847,20 @@ select
         first_login_date is not null
         and days_to_first_login <= {{ var('combined_activation_mid_window_days') }}
         and kit_activated_sla
-    ) as combined_activated_14d
+    ) as combined_activated_14d,
+    -- Late as of the observation date: the SLA window has closed and no kit
+    -- arrived on time. Stated this way it needs no delivery date, so it is
+    -- answerable for a kit still in transit -- which is the honest reading,
+    -- since a kit that has already missed its promise is late whether or not
+    -- anyone knows when it will finally land. Deriving lateness from
+    -- `days_late is not null` instead made the count depend on a future
+    -- delivery date for 6 accounts; it reached the same answer for them, but
+    -- only by reading data the cutoff says does not exist yet.
+    --
+    -- With kit_activated_sla and kit_lost this partitions the mature cohort
+    -- exactly (2,483 + 373 + 81 = 2,937), which
+    -- assert_kit_outcome_taxonomy_partitions_the_mature_cohort enforces.
+    (is_mature_sla and not kit_lost and not kit_activated_sla) as kit_late_sla
 from flagged
 ```
 
@@ -2009,7 +2081,7 @@ git commit -m "Add dim_accounts and fct_subscriptions marts"
 
 **Interfaces:**
 - Consumes: `int_activation_funnel` (Task 8), `stg_kit_deliveries` (Task 7), `dim_accounts` and `fct_subscriptions` (Task 9).
-- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_7d, combined_activated_14d, combined_activated_30d, no_digital_access_14d, days_to_first_login, days_to_kit_delivery, days_observed, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, pawtrail_signup_date, kit_delivered_date, kit_lost, delivery_duration_days, days_late, kit_activated_sla, is_mature_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
+- Produces: `fct_activation_events(account_id, pawtrail_signup_date, digital_activated_7d, kit_activated_sla, combined_activated_7d, combined_activated_14d, combined_activated_30d, no_digital_access_14d, days_to_first_login, days_to_kit_delivery, days_observed, is_mature_7d, is_mature_sla, is_mature_30d, is_mature_combined_7d, is_mature_combined_14d, is_mature_no_login_14d, care_tasks_completed_first_cycle)`; `fct_kit_deliveries(account_id, state, pawtrail_signup_date, kit_delivered_date, kit_lost, delivery_duration_days, days_late, kit_activated_sla, kit_late_sla, is_mature_sla)` — both consumed by Task 14's semantic models. Note `kit_activated_sla` is reused from `int_activation_funnel`, not recomputed, to keep a single source of truth for the SLA definition.
 
 - [ ] **Step 1: Write the singular test before the models exist**
 
@@ -2097,6 +2169,45 @@ Add to `pawtrail_dbt/models/marts/_marts__core.yml` (append under the existing `
           - not_null
 ```
 
+Also create the kit-outcome partition guard. Unlike the tests above it passes
+as soon as the model exists — it is a regression guard on the three-way split,
+not a red-green cycle, and it is here because nothing else in the project checks
+that the buckets `kit_late_rate` divides actually add up:
+
+Create `pawtrail_dbt/tests/assert_kit_outcome_taxonomy_partitions_the_mature_cohort.sql`:
+
+```sql
+-- Fails (returns rows) if on-time, late and lost do not partition the mature
+-- kit cohort exactly once each.
+--
+-- kits_on_time, kits_late and kits_lost are three independently written
+-- expressions over the same population, and kit_late_rate divides one of them
+-- by kits_shipped, which counts the whole of it. Nothing else in the project
+-- checks that they add up: a kit could fall into two buckets (inflating the
+-- late rate) or into none (deflating it) and every measure would still return a
+-- plausible number.
+--
+-- This guards the definition of lateness in particular. It is stated as "the
+-- SLA window closed and no kit arrived on time" rather than as "days_late is
+-- not null", so that it stops depending on a delivery date that may postdate
+-- the observation cutoff -- see assert_days_late_never_reads_a_future_delivery.
+-- A future edit that reverted it to the delivery-derived form would have to
+-- keep the partition intact to get past this test.
+with outcomes as (
+    select
+        account_id,
+        case when kit_activated_sla then 1 else 0 end as on_time,
+        case when kit_late_sla then 1 else 0 end as late,
+        case when kit_lost then 1 else 0 end as lost
+    from {{ ref('fct_kit_deliveries') }}
+    where is_mature_sla
+)
+
+select account_id, on_time, late, lost
+from outcomes
+where on_time + late + lost <> 1
+```
+
 - [ ] **Step 3: Run `dbt build` to verify it fails**
 
 ```bash
@@ -2129,6 +2240,10 @@ select
     is_mature_30d,
     is_mature_combined_7d,
     is_mature_combined_14d,
+    -- The maturity gate for zero_digital_access_accounts. Carried separately
+    -- from is_mature_combined_14d because the question is purely digital: see
+    -- the comment on the measure in _semantic_models.yml.
+    is_mature_no_login_14d,
     care_tasks_completed_first_cycle
 from {{ ref('int_activation_funnel') }}
 ```
@@ -2149,6 +2264,11 @@ select
     -- fleet-wide average that moves with volume rather than with lateness.
     f.days_late,
     f.kit_activated_sla,
+    -- The SLA window closed with no on-time kit. Carried alongside days_late
+    -- rather than derived from it: days_late is null while a late kit is still
+    -- in transit, so a count built on it would undercount lateness at exactly
+    -- the observation boundary.
+    f.kit_late_sla,
     -- Carried so the on-time rate can exclude accounts whose SLA window has not
     -- closed yet, matching the cohort treatment of the activation rates.
     f.is_mature_sla
@@ -2927,6 +3047,7 @@ already carries every input.
 - Create: `pawtrail_dbt/models/marts/_marts__risk.yml`
 - Create: `pawtrail_dbt/models/marts/fct_at_risk_accounts.sql`
 - Create: `pawtrail_dbt/tests/assert_risk_driver_is_exhaustive.sql`
+- Create: `pawtrail_dbt/tests/assert_zero_task_flag_matches_the_kpi_definition.sql`
 
 **Interfaces:**
 - Consumes: `int_activation_funnel` (Task 8).
@@ -2984,6 +3105,53 @@ where risk_driver not in (
    or (is_at_risk and risk_driver = 'healthy')
    or (not is_at_risk and risk_driver <> 'healthy')
 ```
+
+Create `pawtrail_dbt/tests/assert_zero_task_flag_matches_the_kpi_definition.sql`:
+
+```sql
+-- Fails (returns rows) if the CS queue and the zero_task_accounts KPI disagree
+-- about which accounts completed no first-cycle tasks.
+--
+-- They are one concept with two consumers: fct_at_risk_accounts routes on it,
+-- the semantic layer publishes it. While the queue judged the flag at 14 days
+-- and the KPI at 30, the two answered different questions under one name --
+-- 467 accounts against 430 -- and both windows are independently tunable in
+-- dbt_project.yml, so nothing would have caught them drifting further apart.
+--
+-- 30 days is the correct window for both: care_tasks_completed_first_cycle
+-- counts tasks over the *first cycle*, so an account 14 days old still has half
+-- its cycle left to complete one. Judging it at day 14 books an unfinished
+-- cycle as a failed one, which is the same right-censoring error the activation
+-- rates exist to avoid.
+--
+-- The comparison is written against int_activation_funnel rather than against
+-- the measure's own SQL so that the two expressions stay independently authored:
+-- a test that re-derived the flag from fct_at_risk_accounts would compare the
+-- queue against itself and pass no matter which window either side used.
+with kpi_population as (
+    select
+        account_id,
+        (coalesce(care_tasks_completed_first_cycle, 0) = 0 and is_mature_30d)
+            as kpi_zero_tasks
+    from {{ ref('int_activation_funnel') }}
+)
+
+select
+    q.account_id,
+    q.days_observed,
+    q.no_tasks_completed as queue_flag,
+    k.kpi_zero_tasks as kpi_flag
+from {{ ref('fct_at_risk_accounts') }} q
+join kpi_population k on q.account_id = k.account_id
+where q.no_tasks_completed is distinct from k.kpi_zero_tasks
+```
+
+This one is why the model's `no_tasks_completed` carries its own `is_mature_30d`
+condition rather than inheriting this model's 14-day `where` clause. The 14-day
+floor is right for the digital leg — an account cannot fail a 14-day login test
+before day 14 — but wrong for a first-*cycle* task count, which needs the full
+30 days. Sharing one floor across both legs put 467 accounts in the queue's
+zero-task flag against the KPI's 430, under a single name.
 
 - [ ] **Step 2: Write the schema tests before the model exists**
 
@@ -3057,7 +3225,16 @@ flagged as (
         days_observed,
         no_digital_access_14d,
         (kit_lost or kit_delivered_date is null or not kit_activated_sla) as kit_failed_sla,
-        (coalesce(care_tasks_completed_first_cycle, 0) = 0) as no_tasks_completed
+        -- Gated on the 30-day cohort, not on this model's own 14-day floor.
+        -- care_tasks_completed_first_cycle counts tasks across the whole first
+        -- cycle, so an account 14 days old still has half of it left; judging it
+        -- here would book an unfinished cycle as a failed one. It also has to
+        -- match the zero_task_accounts KPI exactly -- one concept with two
+        -- consumers, and while the queue used 14 days and the KPI 30 they named
+        -- 467 accounts against 430. assert_zero_task_flag_matches_the_kpi_definition
+        -- fails if they diverge again.
+        (is_mature_30d and coalesce(care_tasks_completed_first_cycle, 0) = 0)
+            as no_tasks_completed
     from funnel
     -- Only accounts that have actually had the chance to fail. Flagging a
     -- two-day-old signup as "no digital access in 14 days" would fill the CS
@@ -3067,6 +3244,19 @@ flagged as (
 
 select
     *,
+    -- onboarding_gap ("logged in fine, but did no first-cycle tasks") is
+    -- expected to be rare-to-empty at this project's scale, not dead code.
+    -- Task 4's generator (generate_activity.py, generate_digital_engagement)
+    -- draws task_rate = clip(1 - days_to_first_login/30, 0.05, 1.0): the 0.05
+    -- floor is only reached as days_to_first_login approaches 30, but
+    -- no_digital_access_14d already excludes anyone past day 14 -- so the
+    -- window where an account both "has digital access" and "was likely to
+    -- draw zero tasks" barely overlaps. On a run with zero occurrences, that
+    -- is a real ~86.5% per-seed outcome (Poisson, expected count ~0.145 among
+    -- accounts with confirmed on-time digital + kit), not a bug in this case
+    -- branch. Do not "fix" an empty bucket here by editing this condition,
+    -- and do not add a non-degeneracy test asserting this branch is
+    -- populated -- it would fail on most re-seeds.
     case
         when no_digital_access_14d and kit_failed_sla then 'both_legs_failed'
         when kit_failed_sla then 'physical_failure'
@@ -3340,9 +3530,16 @@ semantic_models:
         create_metric: true
       # Early risk counts (spec §6). Both are restricted to accounts old enough
       # to be judged, for the same reason the activation rates are.
+      # Gated on is_mature_no_login_14d, which follows at_risk_no_login_days --
+      # the same var the flag itself uses. is_mature_combined_14d was the wrong
+      # gate for a purely digital question: it is the later of the 14-day
+      # activation window and the *kit* SLA, so a change to kit_sla_days would
+      # silently move the population of a metric that never asks about kits.
+      # Both currently resolve to 14 days, so this changes no number today; it
+      # stops the agreement from being a coincidence.
       - name: zero_digital_access_accounts
         agg: sum
-        expr: case when no_digital_access_14d and is_mature_combined_14d then 1 else 0 end
+        expr: case when no_digital_access_14d and is_mature_no_login_14d then 1 else 0 end
       - name: zero_task_accounts
         agg: sum
         expr: >-
@@ -3449,13 +3646,22 @@ semantic_models:
       # Delay distribution (spec §6, kit operations). days_late is null for
       # on-time and lost kits, and `average` skips nulls, so this answers "when
       # a kit is late, how late" rather than diluting the figure with the
-      # on-time majority.
+      # on-time majority. It is also null for a kit that is late but had not
+      # arrived by the observation date: that delay has not been observed, so it
+      # cannot be averaged. The figure is therefore censored, and reads slightly
+      # low against the eventual truth -- 5.82 days here against 5.95 if the
+      # unobserved deliveries are counted at their future duration.
       - name: avg_days_late
         agg: average
         expr: days_late
+      # Counted from kit_late_sla, not from `days_late is not null`. The two
+      # agree on this seed, but only the former is answerable at the cutoff: a
+      # kit whose SLA has expired is late whether or not it has arrived, and
+      # deriving the count from a delivery-date arithmetic made 6 of the 373
+      # depend on a delivery dated after the observation date.
       - name: kits_late
         agg: sum
-        expr: case when days_late is not null and is_mature_sla then 1 else 0 end
+        expr: case when kit_late_sla then 1 else 0 end
         create_metric: true
 
   - name: weekly_attach
