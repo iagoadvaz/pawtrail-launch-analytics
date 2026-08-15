@@ -240,12 +240,23 @@ on the stricter, SLA-based definition rather than the looser "arrived
 eventually" one.
 
 **Semi-additivity of attach rate.** `cumulative_subscriptions` and
-`eligible_premium_accounts` (both on `weekly_attach`) sum correctly across
-regions within a single week, but not across weeks — summing across weeks
+`eligible_premium_accounts` (both on `weekly_attach`) are snapshots: they sum
+correctly across regions within a single week, but adding them across weeks
 would double-count cumulative subscriptions and multiply the eligible base by
-the number of weeks included. `attach_rate` is therefore valid grouped by
-week, or by week and region together, but must never be grouped by region
-alone.
+the number of weeks included. Both measures declare a `non_additive_dimension`
+on `signup_week`, so MetricFlow reads each row at the **latest week in whatever
+window the query covers** and sums those, instead of summing every week's
+snapshot together. Every grouping is therefore valid — by week (each week is
+its own window), by region, by both, or ungrouped, which answers for the launch
+to date: 3,000 of 15,000 eligible accounts, an attach rate of 0.20 and 1.33x
+the launch target.
+
+This was previously a caveat telling readers never to group by region alone,
+and the caveat was the whole guard. An ungrouped query returned 255,000
+eligible accounts and reported the launch at 0.699x target — 30% *below* plan,
+on a launch that finished 33% above it — with nothing on the page to suggest
+the number was wrong. Prose cannot enforce a grain; `semantic_tests/` asserts
+each of these groupings against the built warehouse instead.
 
 **`at_risk_account_rate` grouped by driver is a tautology.** `risk_driver` is
 assigned from the same three flags that define `is_at_risk`, so every account

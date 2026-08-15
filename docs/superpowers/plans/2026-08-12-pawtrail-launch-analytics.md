@@ -3105,6 +3105,8 @@ git commit -m "Add at-risk account queue tagged by failure driver"
 - Create: `pawtrail_dbt/models/metricflow_time_spine.sql`
 - Create: `pawtrail_dbt/models/_metricflow_time_spine.yml`
 - Create: `pawtrail_dbt/models/marts/_semantic_models.yml`
+- Create: `semantic_tests/__init__.py`, `semantic_tests/conftest.py`, `semantic_tests/test_attach_rate_grains.py`
+- Modify: `pyproject.toml` (add `semantic_tests` to pytest `testpaths`)
 
 **Interfaces:**
 - Consumes: `dim_accounts`, `fct_subscriptions`, `fct_activation_events`, `fct_kit_deliveries`, `fct_weekly_attach`, `fct_weekly_channel_economics`, `fct_sales_pitches` (Tasks 9–13), `fct_at_risk_accounts` (Task 13b).
@@ -3477,11 +3479,26 @@ semantic_models:
     # Both measures are semi-additive: they sum correctly ACROSS states within a
     # week, but not across weeks (cumulative_subscriptions would double-count and
     # eligible_premium_accounts would be multiplied by the number of weeks).
-    # attach_rate is therefore only valid grouped by signup_week, or by
-    # signup_week AND state. Never query it grouped by state alone.
     # `agg: max` was wrong here: grouped by week it silently returns the largest
     # state's cumulative over the largest state's base — i.e. SP's attach rate
     # mislabelled as the national trend.
+    #
+    # `non_additive_dimension` is what makes `agg: sum` safe. It tells MetricFlow
+    # that these columns are snapshots on signup_week: for whatever window a
+    # query covers, read each row at the LATEST week in that window and sum those
+    # across states, rather than summing every week's snapshot together. Without
+    # it, an ungrouped query answers with seventeen weeks of a 15,000-account
+    # base added up — 255,000 — and reports the launch at 0.699x its target when
+    # it finished at 1.33x. Nothing about that answer looks wrong on the page,
+    # which is why a comment warning readers off the query was never enough:
+    # METRICS.md invites a bare `mf query` for every metric, and the Phase 3
+    # decision contract issues exactly that query unattended.
+    #
+    # Grouping by signup_week is unaffected — each week is then its own window,
+    # which is the launch-pulse chart and was always correct. Grouping by state
+    # alone now works too, and is no longer forbidden: each state is read at the
+    # final week, so the parts sum to 3,000 over 15,000. semantic_tests/
+    # test_attach_rate_grains.py asserts all three groupings.
     measures:
       # `create_metric: true` on cumulative_subscriptions only: attach_rate's
       # numerator references this measure directly and no metric of the same
@@ -3492,9 +3509,15 @@ semantic_models:
         agg: sum
         expr: cumulative_subscriptions
         create_metric: true
+        non_additive_dimension:
+          name: signup_week
+          window_choice: max
       - name: eligible_premium_accounts
         agg: sum
         expr: eligible_premium_accounts
+        non_additive_dimension:
+          name: signup_week
+          window_choice: max
 
   - name: weekly_channel_economics
     model: ref('fct_weekly_channel_economics')
@@ -3647,10 +3670,52 @@ declaring their own — every metric in Task 15 groups by `account__state`,
 `metric_time`, always by the reaching entity's name, never by a semantic
 model's own `name:` field.
 
+- [ ] **Step 2b: Add grain tests over the semantic layer**
+
+Neither check in Step 2 can see a wrong number. `dbt build` tests the warehouse
+tables, whose rows are correct; `mf validate-configs` proves the YAML is
+well-formed and every reference resolves. The defect class this task is exposed
+to lives in between: a measure that aggregates correctly at one grain and
+silently wrongly at another. `attach_rate` is the archetype — declared over two
+snapshot columns, it answered an ungrouped query with seventeen weeks of the
+eligible base added together and reported the launch 30% below target when it
+finished 33% above.
+
+Create `semantic_tests/` (`__init__.py`, `conftest.py`,
+`test_attach_rate_grains.py` — see the shipped files) and extend `testpaths` in
+`pyproject.toml`, which Task 1 wrote without this directory because it did not
+exist yet:
+
+```toml
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["data", "generator", "semantic_tests"]
+```
+
+Two properties of the harness are load-bearing:
+
+- The `parsed_manifest` fixture runs `dbt parse` before any query. `mf` reads
+  the semantic manifest dbt wrote, not the YAML on disk, so without it a run
+  reports on the *previous* version of the file — in either direction, and with
+  no staleness warning.
+- Results are read from `--csv`, never from stdout. MetricFlow wraps the table
+  in a progress spinner and a `Wrote query output` banner, so the last line of
+  stdout is a banner rather than a number.
+
+```bash
+.venv/bin/python -m pytest semantic_tests -q
+```
+
+Expected: 4 passed. Be honest about what these are: written against the broken
+measure definitions they fail, but against the YAML in Step 1 they pass
+immediately, so they are regression guards rather than a red-green cycle. They
+earn their place because the failure they cover produces a plausible-looking
+number that no other check in this project examines.
+
 - [ ] **Step 3: Commit**
 
 ```bash
-git add pawtrail_dbt/models/metricflow_time_spine.sql pawtrail_dbt/models/_metricflow_time_spine.yml pawtrail_dbt/models/marts/_semantic_models.yml
+git add pawtrail_dbt/models/metricflow_time_spine.sql pawtrail_dbt/models/_metricflow_time_spine.yml pawtrail_dbt/models/marts/_semantic_models.yml semantic_tests pyproject.toml
 git commit -m "Add MetricFlow semantic models over the marts layer"
 ```
 
@@ -4311,9 +4376,15 @@ interviewer will probe:
 - **On-time vs. delivered.** Combined activation requires the kit to hit the
   10-day SLA, not merely to arrive within 30 days.
 - **Semi-additivity of attach rate.** `cumulative_subscriptions` and
-  `eligible_premium_accounts` sum across regions within a week but not across
-  weeks, so `attach_rate` is valid grouped by week, or by week and region, and
-  must never be grouped by region alone.
+  `eligible_premium_accounts` are snapshots: they sum across regions within a
+  week but not across weeks. Both declare a `non_additive_dimension` on
+  `signup_week`, so MetricFlow reads each row at the latest week in the queried
+  window rather than summing every week's snapshot — which makes every
+  grouping valid, including ungrouped, and is why the document no longer warns
+  readers off any particular grain. Say what the alternative was and why it was
+  rejected: a prose caveat cannot enforce a grain, and while it was the only
+  guard an ungrouped query reported the launch at 0.699x target instead of
+  1.33x.
 
 End the document with a **Future extensions** section listing the catalog
 metrics from spec §6 that are not implemented here, each with the specific

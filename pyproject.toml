@@ -8,4 +8,4 @@ requires-python = ">=3.10,<3.14"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["data", "generator"]
+testpaths = ["data", "generator", "semantic_tests"]

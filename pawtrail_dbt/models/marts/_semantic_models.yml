@@ -262,11 +262,26 @@ semantic_models:
     # Both measures are semi-additive: they sum correctly ACROSS states within a
     # week, but not across weeks (cumulative_subscriptions would double-count and
     # eligible_premium_accounts would be multiplied by the number of weeks).
-    # attach_rate is therefore only valid grouped by signup_week, or by
-    # signup_week AND state. Never query it grouped by state alone.
     # `agg: max` was wrong here: grouped by week it silently returns the largest
     # state's cumulative over the largest state's base — i.e. SP's attach rate
     # mislabelled as the national trend.
+    #
+    # `non_additive_dimension` is what makes `agg: sum` safe. It tells MetricFlow
+    # that these columns are snapshots on signup_week: for whatever window a
+    # query covers, read each row at the LATEST week in that window and sum those
+    # across states, rather than summing every week's snapshot together. Without
+    # it, an ungrouped query answers with seventeen weeks of a 15,000-account
+    # base added up — 255,000 — and reports the launch at 0.699x its target when
+    # it finished at 1.33x. Nothing about that answer looks wrong on the page,
+    # which is why a comment warning readers off the query was never enough:
+    # METRICS.md invites a bare `mf query` for every metric, and the Phase 3
+    # decision contract issues exactly that query unattended.
+    #
+    # Grouping by signup_week is unaffected — each week is then its own window,
+    # which is the launch-pulse chart and was always correct. Grouping by state
+    # alone now works too, and is no longer forbidden: each state is read at the
+    # final week, so the parts sum to 3,000 over 15,000. semantic_tests/
+    # test_attach_rate_grains.py asserts all three groupings.
     measures:
       # `create_metric: true` on cumulative_subscriptions only: attach_rate's
       # numerator references this measure directly and no metric of the same
@@ -277,9 +292,15 @@ semantic_models:
         agg: sum
         expr: cumulative_subscriptions
         create_metric: true
+        non_additive_dimension:
+          name: signup_week
+          window_choice: max
       - name: eligible_premium_accounts
         agg: sum
         expr: eligible_premium_accounts
+        non_additive_dimension:
+          name: signup_week
+          window_choice: max
 
   - name: weekly_channel_economics
     model: ref('fct_weekly_channel_economics')
