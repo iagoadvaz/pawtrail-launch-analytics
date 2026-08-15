@@ -1090,6 +1090,11 @@ select
     s.state,
     s.is_retained,
     s.churned_this_cycle,
+    -- Carried so at_risk_accounts_this_cycle has a column to read. The
+    -- at-risk denominator was added to int_subscription_state to fix the churn
+    -- hazard, but stopped there: the measure that consumes it lives on this
+    -- mart, so mf could not resolve it while dbt build stayed green.
+    s.at_risk_this_cycle,
     s.pet_tier_at_cycle,
     a.account_state,
     a.channel,
@@ -1099,6 +1104,22 @@ select
     -- "retained" and "billing" is exactly what the replenishment model makes
     -- material and a SaaS model would not have.
     case when s.state = 'active' then p.monthly_price_usd else 0 end as cycle_mrr_usd,
+    -- What the subscription is WORTH this cycle, as distinct from what it
+    -- billed. A skipped or paused account is still a subscriber at its tier;
+    -- only a cancellation destroys value. The MRR movement bridge is built on
+    -- this column rather than on cycle_mrr_usd, because a bridge built on cash
+    -- books a one-cycle skip as a full-price contraction and its return as a
+    -- reactivation -- reporting a customer as shrinking and then recovering
+    -- when nothing about the subscription changed.
+    case when s.state <> 'canceled' then p.monthly_price_usd else 0 end
+        as subscription_value_usd,
+    -- The gap between the two: revenue a live subscription did not bill this
+    -- cycle. This is the replenishment-specific signal the cash bridge used to
+    -- hide inside contraction, and it is more useful named -- "how much revenue
+    -- did skip and pause defer" is an operational question with an owner, where
+    -- a contraction line mixing it with genuine downgrades is not.
+    case when s.state in ('skipped', 'paused') then p.monthly_price_usd else 0 end
+        as deferred_billing_usd,
     -- Denominator of the cycle-1 rebill rate: accounts that reached the end of
     -- cycle 0 alive and whose cycle 1 has come due. Restricting here rather than
     -- in the metric stops a dimensional cut from accidentally changing the
@@ -1330,18 +1351,25 @@ Create `pawtrail_dbt/tests/assert_mrr_movement_reconciles.sql`:
 -- This is the model's only real guard. A decomposition that does not reconcile
 -- produces an NRR that looks plausible and is wrong, and no schema test would
 -- catch it.
+--
+-- There is no reactivation term because the bridge is built on subscription
+-- VALUE, not on cash billed. A skip does not reduce the value of a live
+-- subscription, so there is nothing for a return-from-skip to add back. On a
+-- cash-billed bridge the term is mandatory and this test fails by -$2,629.07 at
+-- cycle 2 without it; on a value bridge a non-zero reactivation would mean a
+-- cancelled account had come back, which cancellation being absorbing makes
+-- impossible.
 select
     cycle_index,
     starting_mrr_usd,
     new_mrr_usd,
     expansion_mrr_usd,
-    reactivation_mrr_usd,
     contraction_mrr_usd,
     churned_mrr_usd,
     ending_mrr_usd
 from {{ ref('fct_mrr_movement') }}
 where abs(
-    (starting_mrr_usd + new_mrr_usd + expansion_mrr_usd + reactivation_mrr_usd
+    (starting_mrr_usd + new_mrr_usd + expansion_mrr_usd
      - contraction_mrr_usd - churned_mrr_usd)
     - ending_mrr_usd
 ) > 0.01
@@ -1365,100 +1393,124 @@ Expected: FAIL at compilation.
 Create `pawtrail_dbt/models/marts/fct_mrr_movement.sql`:
 
 ```sql
--- The MRR movement decomposition: new, expansion, contraction, churned,
--- reactivation.
+-- The MRR movement decomposition: new, expansion, contraction, churned -- plus
+-- deferred billings, which sits beside the bridge rather than inside it.
 --
--- REACTIVATION IS NOT OPTIONAL. A row whose previous cycle billed $0 (skipped or
--- paused) and which bills again this cycle belongs to no other bucket:
--- `expansion` requires previous_cycle_mrr > 0 and `new` requires it to be null.
--- Omitting it leaves the bridge unreconciled by -$2,629.07 at cycle 2 and
--- -$479.83 at cycle 3 -- 65 return-from-skip plus 28 return-from-pause rows.
--- With PER_CYCLE_SKIP_RATE = 0.08 this is guaranteed at scale, not a tail case.
+-- THE BRIDGE IS BUILT ON SUBSCRIPTION VALUE, NOT ON CASH BILLED, and that is
+-- the whole design. An earlier version summed cycle_mrr_usd, so a one-cycle
+-- skip booked the subscription's full price as contraction and its return the
+-- next cycle booked as reactivation. At cycle 1 that put $4,795 of skip and
+-- pause inside $6,387.79 of "contraction" -- reported as customers shrinking,
+-- when the tier never moved and the revenue was deferred by a matter of weeks.
+-- It also forced a reactivation bucket into existence purely to make the
+-- arithmetic close (65 return-from-skip plus 28 return-from-pause rows at cycle
+-- 2 alone).
 --
--- The `state <> 'canceled'` guard is load-bearing: previous_cycle_mrr = 0 also
--- matches post-cancellation rows, which must stay in `churned`.
+-- On a value basis none of that arises: a skip does not change what the
+-- subscription is worth, so it never enters the bridge, and there is no
+-- reactivation term because cancellation is absorbing -- a non-zero one would
+-- mean a cancelled account had come back. Contraction now means exactly one
+-- thing, a tier downgrade, which is what makes it comparable to a published
+-- NRR at all.
 --
--- WHY THE EXPANSION ARM MATTERS SO MUCH: without upgrade events, expansion MRR
--- is always zero and NRR is capped at 100% by construction. An indicator
--- structurally incapable of exceeding 100% is misleading, not incomplete --
--- worse than absent. That is why spec item 2.7 (tier change) is a prerequisite
--- for this model rather than an extra.
+-- WHAT THE DEFERRED LINE IS FOR: skipped and paused revenue is the signal a
+-- replenishment business actually has and a SaaS business does not. Published
+-- on its own line it answers "how much revenue did skip and pause defer this
+-- cycle" -- a question with an owner. Buried inside contraction it answered
+-- nothing and corrupted a benchmark metric on the way.
+--
+-- WHY THE EXPANSION ARM MATTERS: without upgrade events, expansion MRR is
+-- always zero and NRR is capped at 100% by construction. An indicator
+-- structurally incapable of exceeding 100% is misleading, not incomplete. That
+-- is why spec item 2.7 (tier change) is a prerequisite for this model. Note
+-- that clearing the structural cap does not lift NRR above 100% on this seed --
+-- see Task 5 Step 5 -- it makes the number mean what its name says.
 with lifecycle as (
     select
         account_id,
         cycle_index,
-        cycle_mrr_usd,
+        -- The grain is (cycle, due week), not cycle alone. cycle_index spans
+        -- ~120 distinct due dates, so a semantic model keyed on it cannot carry
+        -- a time dimension -- and MetricFlow requires one for every measure.
+        -- Regraining is the better fix regardless: it is what lets the bridge
+        -- be read as a time series rather than as four opaque buckets.
+        date_trunc('week', renewal_due_date) as cycle_due_week,
+        subscription_value_usd,
+        deferred_billing_usd,
         state
     from {{ ref('fct_subscription_lifecycle') }}
 ),
 
--- The account's MRR at the previous cycle, so the change can be classified.
+-- The account's subscription value at the previous cycle, so the change can be
+-- classified.
 with_previous as (
     select
         account_id,
         cycle_index,
-        cycle_mrr_usd,
+        cycle_due_week,
+        subscription_value_usd,
+        deferred_billing_usd,
         state,
-        lag(cycle_mrr_usd) over (
+        lag(subscription_value_usd) over (
             partition by account_id order by cycle_index
-        ) as previous_cycle_mrr_usd
+        ) as previous_value_usd
     from lifecycle
 ),
 
 classified as (
     select
         cycle_index,
-        -- New: the account's first appearance (no previous cycle) with revenue.
+        cycle_due_week,
+        -- New: the account's first appearance, carrying value.
         sum(case
-            when previous_cycle_mrr_usd is null and cycle_mrr_usd > 0
-            then cycle_mrr_usd else 0
+            when previous_value_usd is null and subscription_value_usd > 0
+            then subscription_value_usd else 0
         end) as new_mrr_usd,
-        -- Expansion: moved up a tier and is still billing.
+        -- Expansion: moved up a tier while alive.
         sum(case
-            when previous_cycle_mrr_usd is not null
-                 and cycle_mrr_usd > previous_cycle_mrr_usd
-                 and previous_cycle_mrr_usd > 0
-            then cycle_mrr_usd - previous_cycle_mrr_usd else 0
+            when previous_value_usd is not null
+                 and subscription_value_usd > previous_value_usd
+                 and previous_value_usd > 0
+            then subscription_value_usd - previous_value_usd else 0
         end) as expansion_mrr_usd,
-        -- Contraction: moved down a tier, OR stopped billing without canceling
-        -- (skip, pause). Counting a skip as contraction is the right read for
-        -- replenishment: the revenue vanished this cycle and the account is
-        -- still alive.
+        -- Contraction: moved DOWN a tier while alive. Nothing else reaches this
+        -- bucket -- a skip leaves subscription_value_usd untouched, and a
+        -- cancellation is churn.
         sum(case
-            when previous_cycle_mrr_usd is not null
-                 and cycle_mrr_usd < previous_cycle_mrr_usd
+            when previous_value_usd is not null
+                 and subscription_value_usd < previous_value_usd
                  and state <> 'canceled'
-            then previous_cycle_mrr_usd - cycle_mrr_usd else 0
+            then previous_value_usd - subscription_value_usd else 0
         end) as contraction_mrr_usd,
-        -- Reactivation: billed $0 last cycle (skipped or paused) and is
-        -- billing again now. Without this bucket the bridge does not
-        -- reconcile -- see the model header.
+        -- Churned: cancelled this cycle, and the value it carried is gone.
         sum(case
-            when previous_cycle_mrr_usd = 0
-                 and cycle_mrr_usd > 0
-                 and state <> 'canceled'
-            then cycle_mrr_usd else 0
-        end) as reactivation_mrr_usd,
-        -- Churned: canceled, and the previous cycle's revenue is gone for good.
-        sum(case
-            when state = 'canceled' and coalesce(previous_cycle_mrr_usd, 0) > 0
-            then previous_cycle_mrr_usd else 0
+            when state = 'canceled' and coalesce(previous_value_usd, 0) > 0
+            then previous_value_usd else 0
         end) as churned_mrr_usd,
-        sum(coalesce(previous_cycle_mrr_usd, 0)) as starting_mrr_usd,
-        sum(cycle_mrr_usd) as ending_mrr_usd
+        sum(coalesce(previous_value_usd, 0)) as starting_mrr_usd,
+        sum(subscription_value_usd) as ending_mrr_usd,
+        -- Beside the bridge, deliberately not inside it: this revenue was not
+        -- lost, it was not billed this cycle.
+        sum(deferred_billing_usd) as deferred_billings_usd
     from with_previous
-    group by 1
+    group by 1, 2
 )
 
 select
+    -- Surrogate key: the grain is (cycle, week), so cycle_index alone is not
+    -- unique and declaring it the primary entity would be a false uniqueness
+    -- claim that can fan out joins. Same pattern as channel_week_key.
+    cast(cycle_index as varchar) || '_' || cast(cycle_due_week as varchar)
+        as mrr_movement_key,
     cycle_index,
+    cycle_due_week,
     starting_mrr_usd,
     new_mrr_usd,
     expansion_mrr_usd,
-    reactivation_mrr_usd,
     contraction_mrr_usd,
     churned_mrr_usd,
-    ending_mrr_usd
+    ending_mrr_usd,
+    deferred_billings_usd
 from classified
 ```
 
@@ -1487,7 +1539,9 @@ In `_marts__business.yml`:
 ```yaml
   - name: fct_mrr_movement
     columns:
-      - name: cycle_index
+      # The surrogate key, not cycle_index: the grain is (cycle, due week), so
+      # cycle_index repeats across weeks and a unique test on it would fail.
+      - name: mrr_movement_key
         tests:
           - unique
           - not_null
@@ -1507,7 +1561,7 @@ In `_semantic_models.yml`:
     entities:
       - name: mrr_movement_cycle
         type: primary
-        expr: cycle_index
+        expr: mrr_movement_key
     dimensions:
       - name: movement_cycle_index
         type: categorical
@@ -1544,10 +1598,6 @@ In `_semantic_models.yml`:
         agg: sum
         expr: expansion_mrr_usd
         create_metric: true
-      - name: reactivation_mrr_usd
-        agg: sum
-        expr: reactivation_mrr_usd
-        create_metric: true
       - name: contraction_mrr_usd
         agg: sum
         expr: contraction_mrr_usd
@@ -1555,6 +1605,13 @@ In `_semantic_models.yml`:
       - name: churned_mrr_usd
         agg: sum
         expr: churned_mrr_usd
+        create_metric: true
+      # Beside the bridge, not inside it: revenue a live subscription did not
+      # bill this cycle because it skipped or paused. Publishing it on its own
+      # line is what lets contraction mean "a tier went down" and nothing else.
+      - name: deferred_billings_usd
+        agg: sum
+        expr: deferred_billings_usd
         create_metric: true
 ```
 
@@ -1589,14 +1646,12 @@ In `_metrics.yml`:
     type: derived
     label: "Net Revenue Retention (launch cohort, <=4 cycles, not benchmark-comparable)"
     type_params:
-      expr: (starting + expansion + reactivation - churned - contraction) / nullif(starting, 0)
+      expr: (starting + expansion - churned - contraction) / nullif(starting, 0)
       metrics:
         - name: starting_mrr_usd
           alias: starting
         - name: expansion_mrr_usd
           alias: expansion
-        - name: reactivation_mrr_usd
-          alias: reactivation
         - name: churned_mrr_usd
           alias: churned
         - name: contraction_mrr_usd
@@ -1613,32 +1668,28 @@ cd pawtrail_dbt && ../.venv/bin/dbt build --select fct_mrr_movement+ 2>&1 | tail
 
 Expected: `assert_mrr_movement_reconciles` passes. `expansion_mrr_usd` **greater than zero** in at least one cycle — if it is zero everywhere, the upgrade arm did not reach the data and NRR is capped, which is exactly the failure the spec warns about. `net_revenue_retention` greater than `gross_revenue_retention` in every cycle with expansion.
 
-Measured on this seed: expansion **$340 / $190 / $20** at cycles 1–3, GRR
-**0.685 / 0.795 / 0.796**, NRR **0.690 / 0.883 / 0.872**. Both properties hold.
+Measured on this seed: expansion **$340 / $190 / $20** at cycles 1–3,
+contraction **$140 / $70 / $10**, deferred billings **$6,247.79 / $3,128.91 /
+$949.64**, GRR **0.770 / 0.892 / 0.931**, NRR **0.775 / 0.898 / 0.934**. Both
+properties hold, and the bridge reconciles to the cent at every cycle.
 
-**What this step does NOT establish, despite an earlier draft titling it so:
-NRR does not exceed 100% here, and on this generator it cannot.** Spec item 2.7
-is delivered mechanically — the upgrade arm exists, expansion is non-zero, NRR
-sits above GRR — but the structural cap has been replaced by a numerical one. A
+**Read the contraction and deferred lines together, because they are the point
+of this model** (finding F13 in the metric-correctness review). An earlier
+version built the bridge on cash billed, which booked a one-cycle skip as a
+full-price contraction and its return as a reactivation. That reported cycle 1
+contraction as **$6,387.79** — and $140.00 + $6,247.79 is exactly that figure.
+The old line was 97.8% deferred billings and 2.2% genuine downgrades, added
+together and labelled as customers shrinking. On a value basis the two separate,
+GRR rises 8.5 points at cycle 1 and 13 at cycle 3, and contraction means one
+thing: a tier went down.
+
+**NRR still does not exceed 100%, and on this generator it cannot.** That is
+expected and is not what the fix was for. Spec item 2.7 removes the *structural*
+cap — the upgrade arm exists, expansion is non-zero, NRR sits above GRR — but a
 2.2% upgrade rate on a ~$10 tier delta cannot offset a 20%+ cycle-1 hazard, so
-NRR reads 0.69–0.88 forever and is not comparable to any published benchmark.
-
-Two things are needed to change that, and both are deliberately **out of scope
-here** rather than silently unaddressed (finding F13 in the metric-correctness
-review):
-
-1. Contraction is currently defined as *cash not billed this cycle*, so a
-   one-cycle skip books the subscription's full price as contraction and its
-   return books nothing. Defining it on *subscription value at the tier in
-   force* would make a skip a billing event rather than a downgrade. At cycle 1,
-   $4,795 of the $6,387.79 contraction is skip and pause that mostly returns.
-2. Skipped and paused revenue should then be published as its own **deferred
-   billings** line. That is the replenishment-specific signal this dataset
-   actually has, and it is more useful named than smuggled inside contraction.
-
-Until then, label NRR in METRICS.md as a launch-cohort reading over at most four
-cycles, and do not compare it to a benchmark. Do **not** tune the upgrade rate
-to lift it: that manufactures the number the metric exists to measure.
+NRR reads 0.77–0.93 and is a launch-cohort figure, not a benchmark-comparable
+one. Label it that way in METRICS.md and do **not** tune the upgrade rate to
+lift it: that manufactures the number the metric exists to measure.
 
 - [ ] **Step 6: Commit**
 
