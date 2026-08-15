@@ -84,6 +84,7 @@ import pandas as pd
 
 from generator.generate_subscription_lifecycle import (
     DAY_ZERO_CANCEL_RATE,
+    _add_months,
     NON_ACTIVATED_CHURN_MULTIPLIER,
     PER_CYCLE_CHURN_HAZARD,
     generate_subscription_lifecycle,
@@ -283,23 +284,48 @@ def test_skips_do_not_end_the_subscription():
     skipped = events[events["event_type"] == "skipped"]
     assert len(skipped) > 0
 
+    # The last cycle each account could have faced, derived from the observed
+    # window ALONE. This is the load-bearing part of the test and it took two
+    # attempts to get right.
+    #
+    # `len(types) > 1` was the first version: a tautology, since `activated` is
+    # always first, so the assertion was `X or True`. The second version
+    # compared each skip against `max(present_cycles)` -- the account's own last
+    # event -- and was still unfailable, for a subtler reason: if a skip ends
+    # the subscription then the skip IS the last event, so `c < last_cycle` is
+    # false and the assertion never runs. It read the boundary off the very data
+    # the mutation truncates, which is the same self-comparison that makes
+    # assert_no_events_after_cancellation unfailable in Task 3.
+    #
+    # Mutating the generator so a skip BREAKS out of the cycle loop passed both
+    # earlier versions and fails this one.
+    observation_date = subs["pawtrail_signup_date"].max()
+    signup = dict(zip(subs["account_id"], subs["pawtrail_signup_date"]))
+
+    def _last_due_cycle(account_id):
+        due = [
+            c for c in sorted(PER_CYCLE_CHURN_HAZARD)
+            if _add_months(signup[account_id], c) <= observation_date
+        ]
+        return max(due) if due else 0
+
+    checked = 0
     for account_id, group in events.groupby("account_id"):
         ordered = group.sort_values("event_seq")
         types = list(ordered["event_type"])
-        if "skipped" in types and "canceled" not in types:
-            # `len(types) > 1` would be a tautology -- `activated` is always
-            # first, so it is true whenever a skip exists at all, making the
-            # whole assertion `X or True`. Mutating the generator so a skip
-            # BREAKS out of the cycle loop still passed that version.
-            #
-            # Assert the property directly: the cycle after a skip must carry
-            # its own event whenever that cycle is inside the observed window.
-            skip_cycles = set(ordered.loc[ordered["event_type"] == "skipped", "cycle_index"])
-            present_cycles = set(ordered["cycle_index"])
-            last_cycle = max(present_cycles)
-            for c in skip_cycles:
-                if c < last_cycle:
-                    assert c + 1 in present_cycles, (account_id, c, present_cycles)
+        if "skipped" not in types or "canceled" in types:
+            continue
+        skip_cycles = set(ordered.loc[ordered["event_type"] == "skipped", "cycle_index"])
+        present_cycles = set(ordered["cycle_index"])
+        last_due = _last_due_cycle(account_id)
+        for c in skip_cycles:
+            if c < last_due:
+                checked += 1
+                assert c + 1 in present_cycles, (account_id, c, present_cycles, last_due)
+
+    # A guard on the guard: if no skip is followed by a due cycle, the loop
+    # above asserts nothing and the test is vacuous however it is written.
+    assert checked > 0, "no skip had a subsequent due cycle to check"
 ```
 
 - [ ] **Step 3: Run to verify they fail**
@@ -877,7 +903,7 @@ tier_at_cycle as (
         ) as pet_tier_at_cycle
     from cycles c
     join {{ ref('stg_subscriptions') }} s on c.account_id = s.account_id
-)
+),
 
 -- Pause carried forward: an account is paused at cycle n if its most recent
 -- pause/resume event at or before cycle n was a 'paused'. This is what makes a
@@ -1577,7 +1603,7 @@ In `_metrics.yml`:
           alias: contraction
 ```
 
-- [ ] **Step 5: Run and verify NRR can exceed 100%**
+- [ ] **Step 5: Run and verify expansion reaches the data**
 
 ```bash
 cd pawtrail_dbt && ../.venv/bin/dbt build --select fct_mrr_movement+ 2>&1 | tail -8
@@ -1586,6 +1612,33 @@ cd pawtrail_dbt && ../.venv/bin/dbt build --select fct_mrr_movement+ 2>&1 | tail
 ```
 
 Expected: `assert_mrr_movement_reconciles` passes. `expansion_mrr_usd` **greater than zero** in at least one cycle — if it is zero everywhere, the upgrade arm did not reach the data and NRR is capped, which is exactly the failure the spec warns about. `net_revenue_retention` greater than `gross_revenue_retention` in every cycle with expansion.
+
+Measured on this seed: expansion **$340 / $190 / $20** at cycles 1–3, GRR
+**0.685 / 0.795 / 0.796**, NRR **0.690 / 0.883 / 0.872**. Both properties hold.
+
+**What this step does NOT establish, despite an earlier draft titling it so:
+NRR does not exceed 100% here, and on this generator it cannot.** Spec item 2.7
+is delivered mechanically — the upgrade arm exists, expansion is non-zero, NRR
+sits above GRR — but the structural cap has been replaced by a numerical one. A
+2.2% upgrade rate on a ~$10 tier delta cannot offset a 20%+ cycle-1 hazard, so
+NRR reads 0.69–0.88 forever and is not comparable to any published benchmark.
+
+Two things are needed to change that, and both are deliberately **out of scope
+here** rather than silently unaddressed (finding F13 in the metric-correctness
+review):
+
+1. Contraction is currently defined as *cash not billed this cycle*, so a
+   one-cycle skip books the subscription's full price as contraction and its
+   return books nothing. Defining it on *subscription value at the tier in
+   force* would make a skip a billing event rather than a downgrade. At cycle 1,
+   $4,795 of the $6,387.79 contraction is skip and pause that mostly returns.
+2. Skipped and paused revenue should then be published as its own **deferred
+   billings** line. That is the replenishment-specific signal this dataset
+   actually has, and it is more useful named than smuggled inside contraction.
+
+Until then, label NRR in METRICS.md as a launch-cohort reading over at most four
+cycles, and do not compare it to a benchmark. Do **not** tune the upgrade rate
+to lift it: that manufactures the number the metric exists to measure.
 
 - [ ] **Step 6: Commit**
 
