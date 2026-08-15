@@ -976,7 +976,13 @@ with funnel as (
         pawtrail_signup_date,
         kit_lost,
         combined_activated_30d,
-        is_mature_30d
+        is_mature_30d,
+        -- Both carried for the waste_reason split below, which separates a
+        -- customer who engaged but whose kit missed the SLA from one who never
+        -- showed up at all. Without them the split cannot be computed and the
+        -- model does not build.
+        first_login_date,
+        days_to_first_login
     from {{ ref('int_activation_funnel') }}
 ),
 
@@ -1219,9 +1225,19 @@ In `pawtrail_dbt/models/marts/_marts__business.yml`, append:
       - name: new_subscriptions
         tests:
           - not_null
+      # Scoped to weeks that acquired somebody, for the same reason the `cac`
+      # test on fct_weekly_channel_economics is. That mart carries every week
+      # that spent money, including the launch's final week, which converted
+      # nobody -- effective_cac divides by new_subscriptions and is genuinely
+      # undefined there. Unscoped, this test fails on exactly those 2 rows the
+      # moment the F1 spend-leak fix lands, and F1 is a prerequisite of this
+      # phase. The complementary guard, that no spend goes missing, is
+      # assert_channel_economics_spend_reconciles upstream.
       - name: effective_cac
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "new_subscriptions > 0"
       - name: wasted_fulfillment_usd
         tests:
           - not_null

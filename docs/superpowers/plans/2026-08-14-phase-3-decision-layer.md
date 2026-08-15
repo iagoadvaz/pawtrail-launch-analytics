@@ -92,7 +92,7 @@ zero_digital_access_accounts,400.0,above,Re-engagement campaign for accounts wit
 zero_task_accounts,600.0,above,Re-engagement campaign for accounts with no completed task,Customer Success,staying,
 never_logged_in_share,0.20,above,Open an onboarding investigation; the mean time-to-login cannot see this,Product,valuable,
 win_rate,0.30,below,Review the sales-assisted playbook,Sales,efficient,
-incremental_mrr,5000.0,below,Review tier mix and pricing,Growth,growing,weekly_attach_row__signup_week__week
+incremental_mrr,5000.0,below,Review tier mix and pricing,Growth,growing,channel_week_row__signup_week
 arpa,25.0,below,Review tier mix,Growth,valuable,
 contribution_margin_per_cycle,10.0,below,Review COGS and shipping per tier,Finance,valuable,account__pet_tier
 cac_payback_months,3.0,above,Freeze spend increases on the channel,Growth,efficient,channel_week_row__channel
@@ -294,7 +294,7 @@ transactions, no approvals, no declines, no dunning and no refunds.
 
 The distinction is not pedantic. Reporting an entitlement as revenue is the
 misstatement an auditor refuses to sign, and it is the reason `cac_payback_months`
-should be read alongside `share_breakeven_within_window` rather than alone —
+should be read alongside `share_breakeven_cycle_exposed` rather than alone —
 payback expressed in months quietly implies renewals that, without payment data,
 nobody has observed being collected.
 
@@ -322,7 +322,7 @@ git commit -m "docs: label modelled-entitlement revenue metrics as such"
 
 **Interfaces:**
 - Consumes: `stg_decision_contract`, plus a current-values CSV generated in Task 5.
-- Produces: `fct_decision_contract`, metric grain, columns `metric_name`, `threshold_value`, `threshold_direction`, `current_value`, `status` (`'ok'`, `'triggered'`, `'no_data'`), `action`, `owner`, `decision_question`.
+- Produces: `fct_decision_contract`, metric grain, columns `metric_name`, `threshold_value`, `threshold_direction`, `current_value`, `segment` (the state/channel/tier the value came from, null when the metric is ungrouped or read at a period), `status` (`'ok'`, `'triggered'`, `'no_data'`), `action`, `owner`, `decision_question`.
 
 > **Architecture note.** Each metric's current value comes from MetricFlow, which is not queryable from inside dbt SQL. Hence the flow: Task 5 exports `dashboard/control_metric_values.csv` via `mf query`, and that CSV becomes a seed. This makes the mart **derived from an export** rather than from a live query — which is honest for a project whose dashboard is already a static snapshot (see `dashboard/README.md`, "Data freshness").
 
@@ -348,7 +348,7 @@ for entry in contract:
     out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
         print('WARNING: not queryable: ' + name, file=sys.stderr)
-        rows.append({'metric_name': name, 'current_value': ''})
+        rows.append({'metric_name': name, 'current_value': '', 'segment': ''})
         os.unlink(path)
         continue
 
@@ -360,27 +360,65 @@ for entry in contract:
     # the wrong column the moment a group-by adds one.
     if not data or name not in data[0]:
         print('WARNING: no usable result for ' + name, file=sys.stderr)
-        rows.append({'metric_name': name, 'current_value': ''})
+        rows.append({'metric_name': name, 'current_value': '', 'segment': ''})
         continue
 
-    # Grouped metrics are read at their LAST period (rows ordered above), which
-    # is the current value. Ungrouped metrics must return exactly one row.
-    if not group_by and len(data) != 1:
-        print('WARNING: ungrouped query returned multiple rows: ' + name, file=sys.stderr)
-        rows.append({'metric_name': name, 'current_value': ''})
+    if not group_by:
+        # Ungrouped metrics must return exactly one row.
+        if len(data) != 1:
+            print('WARNING: ungrouped query returned multiple rows: ' + name, file=sys.stderr)
+            rows.append({'metric_name': name, 'current_value': '', 'segment': ''})
+            continue
+        rows.append({'metric_name': name, 'current_value': data[0][name], 'segment': ''})
         continue
 
-    rows.append({'metric_name': name, 'current_value': data[-1][name]})
+    # HOW A GROUPED RESULT IS REDUCED TO ONE VALUE DEPENDS ON WHAT IT IS
+    # GROUPED BY, and getting this wrong silences the alarm without emptying
+    # the board -- which is far harder to notice than a blank cell.
+    #
+    # Grouped by TIME, the last row is the current period and is the value the
+    # contract wants.
+    #
+    # Grouped by a CATEGORY -- state, channel, pet tier -- the last row is
+    # whichever category happens to sort last, and the threshold was written to
+    # catch the WORST one. `kit_lost_rate above 0.05` grouped by state recorded
+    # VA at 0.0 and reported ok, while OH sat at 0.0724: the alarm for this
+    # launch's single biggest operational finding, silenced alphabetically.
+    # Seven of the contract's thresholds were silenced this way.
+    #
+    # So a categorical group-by is reduced in the direction of its own
+    # threshold: the maximum for `above`/`at_or_above`, the minimum for
+    # `below`. That is the only reduction under which "not triggered" means
+    # "no segment breaches this".
+    key = next(k for k in data[0] if k != name)
+    numeric = [(r, float(r[name])) for r in data if (r.get(name) or '').strip() != '']
+    if not numeric:
+        print('WARNING: no numeric rows for ' + name, file=sys.stderr)
+        rows.append({'metric_name': name, 'current_value': '', 'segment': ''})
+        continue
+
+    time_grouped = any(
+        group_by.endswith(suffix) for suffix in ('__day', '__week', '__month', '__quarter', '__year')
+    ) or group_by.startswith('metric_time')
+
+    if time_grouped:
+        row, value = numeric[-1]
+    elif entry['threshold_direction'] in ('above', 'at_or_above'):
+        row, value = max(numeric, key=lambda rv: rv[1])
+    else:
+        row, value = min(numeric, key=lambda rv: rv[1])
+
+    rows.append({'metric_name': name, 'current_value': row[name], 'segment': row[key]})
 
 with open('seeds/raw_metric_values.csv', 'w', newline='') as f:
-    w = csv.DictWriter(f, fieldnames=['metric_name', 'current_value'])
+    w = csv.DictWriter(f, fieldnames=['metric_name', 'current_value', 'segment'])
     w.writeheader(); w.writerows(rows)
 print('values written:', len(rows))
 PY
 head -3 seeds/raw_metric_values.csv
 ```
 
-**Two things this script must get right, both of which an earlier draft got wrong.**
+**Three things this script must get right, all of which an earlier draft got wrong.**
 
 *(1) Never parse `mf`'s stdout.* With `--csv /dev/stdout`, MetricFlow interleaves
 its spinner and a trailing `🖨 Wrote query output to /dev/stdout` line into the
@@ -389,13 +427,35 @@ becomes `no_data`, the board renders empty, and Task 4 Step 3's "nothing
 triggered, so loosen the thresholds" advice sends you tuning thresholds to chase
 a string-parsing bug. Write to a real temp file and read it with `csv.DictReader`.
 
-*(2) Semi-additive metrics must be read at their declared grain, not ungrouped.*
+*(2) A grouped result must be reduced the way its own threshold reads it.* Taking
+the last row is right for a time group-by — that is the current period — and
+wrong for a categorical one, where it returns whichever state or channel happens
+to sort last. Run against real exports, `kit_lost_rate above 0.05` grouped by
+state recorded **VA at 0.0** and reported `ok`, while **OH sat at 0.0724**: the
+alarm for this launch's single biggest operational finding, silenced
+alphabetically. Seven thresholds were silenced that way, including every
+channel-scoped one — `cac_by_channel` read self_serve's $7.14 rather than
+sales_assisted's $26.55. A categorical group-by is therefore reduced in the
+direction of its threshold, max for `above`/`at_or_above` and min for `below`,
+which is the only reduction under which "not triggered" means "no segment
+breaches this". The segment that produced the value is recorded alongside it,
+because "kit_lost_rate 0.072, audit the carrier" is not actionable until it says
+OH.
+
+*(3) Semi-additive metrics must be read at their declared grain, not ungrouped.*
 `attach_rate_vs_target` queried without a group-by returns **0.699** — it sums 17
 weekly snapshots of a constant base — and fires a "launch is behind plan" alarm
 on a launch that finished **33% above** target. `eligible_premium_accounts`
 returns **255,000** for a base of 15,000 the same way. The contract seed
 therefore carries a `group_by` column, and those metrics are read at their last
 period rather than as a blended total.
+
+One artefact to expect rather than to fix: `incremental_mrr` is read at its last
+period, and once the F1 spend-leak fix lands the final week of the export is the
+launch's trailing spend-only week, which acquired nobody and therefore added
+**$0** of MRR. It triggers `below 5000`. That is factually true and arguably
+worth alarming on, but it is a boundary effect rather than a demand signal —
+read it next to the preceding week ($1,099.60) before acting.
 
 Metrics not queryable at any grain (`wow_subscription_growth` needs a
 `metric_time` offset and exits 1) come out empty and the model marks them
@@ -420,6 +480,11 @@ with contract as (
 values_ as (
     select
         metric_name,
+        -- Which segment produced the value. A categorical threshold is written
+        -- to catch the worst state or channel, so the board has to name it: a
+        -- row reading "kit_lost_rate 0.072, triggered, audit the carrier" is
+        -- an instruction nobody can act on until it says OH.
+        nullif(segment, '') as segment,
         -- Empty becomes null, not zero: a semi-additive metric that cannot be
         -- queried without a group-by does not have a value of "zero", it has no
         -- value at this grain. Zero would trip every `below` threshold by
@@ -439,6 +504,7 @@ select
     c.threshold_value,
     c.threshold_direction,
     v.current_value,
+    v.segment,
     c.action,
     c.owner,
     case
@@ -576,7 +642,7 @@ def control_dir(tmp_path):
            ["pct_base_never_rebilled", "renewal_unexposed_accounts", "assessable_base_accounts"],
            [["0.113", "339", "3000"]])
     _write(d / "control_breakeven_by_channel.csv",
-           ["account__channel", "avg_breakeven_cycles", "share_breakeven_within_window"],
+           ["account__channel", "avg_breakeven_cycles", "share_breakeven_cycle_exposed"],
            [["self_serve", "1.0", "0.98"], ["sales_assisted", "2.4", "0.61"]])
     _write(d / "control_effective_cac.csv",
            ["effective_cac_row__channel", "effective_cac", "cac_uplift_pct"],
@@ -964,7 +1030,7 @@ def build_dashboard(control_dir: Path, output_path: Path) -> str:
             f"Cycles to breakeven — {_esc(r.get('account__channel', ''))}",
             "breakeven_cycles · replaces LTV:CAC in this window",
             _num(r.get("avg_breakeven_cycles", ""), 1),
-            _pct(r.get("share_breakeven_within_window", ""))
+            _pct(r.get("share_breakeven_cycle_exposed", ""))
             + " of accounts reach breakeven inside the observed window",
         )
         for r in breakeven
