@@ -2606,6 +2606,7 @@ git commit -m "Add fct_weekly_attach mart computing attach rate against the Prem
 
 **Files:**
 - Modify: `pawtrail_dbt/models/marts/_marts__business.yml` (append new model tests)
+- Create: `pawtrail_dbt/tests/assert_channel_economics_spend_reconciles.sql`
 - Create: `pawtrail_dbt/models/marts/fct_weekly_channel_economics.sql`
 
 **Interfaces:**
@@ -2631,13 +2632,88 @@ Add to `pawtrail_dbt/models/marts/_marts__business.yml` (append under `models:`)
       - name: new_subscriptions
         tests:
           - not_null
-      # Guards the spend join: every grouped row has at least one subscription,
-      # so cac can only be null if fct_marketing_spend failed to join. Without
-      # this test a week-boundary mismatch produces an all-null CAC chart and
-      # still builds green.
+      # Guards the spend join: on a week that acquired somebody, cac can only be
+      # null if fct_marketing_spend failed to join. Without this test a
+      # week-boundary mismatch produces an all-null CAC chart and still builds
+      # green.
+      #
+      # The `where` is what makes the guard honest rather than merely quiet. The
+      # model carries every week that spent money, including weeks that acquired
+      # nobody -- the last week of a launch always looks like that, since its
+      # spend has not converted yet -- and cac is genuinely undefined there:
+      # dividing real spend by zero subscriptions has no answer, and 0 or
+      # infinity would both be inventions. Dropping the test instead would give
+      # up the join guard entirely; scoping it keeps it exactly as strong as it
+      # was for the rows it was written about. The complementary direction --
+      # spend that never reaches the mart at all -- is
+      # assert_channel_economics_spend_reconciles below.
       - name: cac
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "new_subscriptions > 0"
+```
+
+Also create `pawtrail_dbt/tests/assert_channel_economics_spend_reconciles.sql`.
+The schema tests above check the columns that survive the join; this one checks
+that no row went missing from it, which is the failure mode that leaves every
+surviving column internally consistent:
+
+```sql
+-- Fails (returns rows) if the spend fct_weekly_channel_economics reports for a
+-- (channel, week) differs from the spend fct_marketing_spend recorded for it.
+--
+-- The mart is built by joining spend onto the weeks that produced signups, so a
+-- week with spend but no signups has no row to join onto and its spend leaves
+-- the warehouse entirely -- silently, because every column that survives is
+-- still internally consistent. The `cac not_null` test cannot see it either: it
+-- only guards the opposite direction, a signup week whose spend failed to join.
+-- A launch's last spend week is exactly the case that goes missing, since spend
+-- is booked for a week that has not converted yet.
+--
+-- Every dollar in fct_marketing_spend must therefore appear exactly once here.
+-- The three arms below are the three ways that can break: the mart dropped a
+-- spend week, the mart reports spend the source does not have, or the two
+-- disagree on the amount (a fanned-out join double-counts; a partial one
+-- undercounts).
+with source_spend as (
+    select
+        channel,
+        date_trunc('week', week_start_date) as signup_week,
+        sum(spend_usd) as source_spend_usd
+    from {{ ref('fct_marketing_spend') }}
+    group by 1, 2
+),
+
+reported_spend as (
+    select
+        channel,
+        signup_week,
+        sum(spend_usd) as mart_spend_usd
+    from {{ ref('fct_weekly_channel_economics') }}
+    group by 1, 2
+)
+
+select
+    coalesce(s.channel, r.channel) as channel,
+    coalesce(s.signup_week, r.signup_week) as signup_week,
+    s.source_spend_usd,
+    r.mart_spend_usd
+from source_spend s
+full outer join reported_spend r
+    on s.channel = r.channel
+   and s.signup_week = r.signup_week
+-- A week the mart never carried. This is the arm that catches the dropped
+-- final spend week.
+where r.channel is null
+   -- A week the mart carries with a spend figure the source cannot account for.
+   -- A mart row with no source row is legitimate only while its spend stays
+   -- null; a number there would be invented.
+   or (s.channel is null and r.mart_spend_usd is not null)
+   -- Both sides present and disagreeing. The tolerance is half a cent: these
+   -- are doubles summed in a different order on each side, so exact equality
+   -- would fail on floating-point noise rather than on a real leak.
+   or abs(s.source_spend_usd - r.mart_spend_usd) > 0.005
 ```
 
 - [ ] **Step 2: Run `dbt build` to verify it fails**
@@ -2718,20 +2794,41 @@ spend as (
     from {{ ref('fct_marketing_spend') }}
 ),
 
+-- The grain is every (channel, week) either side knows about, not just the weeks
+-- that produced signups. Driving the model off the signup weeks alone and
+-- left-joining spend onto them drops any week that spent money without
+-- converting anyone -- and the week that always fits that description is the
+-- last one, because its spend has not had time to convert yet. That is 7% of
+-- this launch's spend leaving the warehouse silently: every surviving row stays
+-- internally consistent, so nothing fails. `union` and not `union all`: a
+-- channel-week present on both sides must yield one row, or the surrogate key
+-- stops being unique and every measure double-counts.
+channel_weeks as (
+    select channel, signup_week from weekly_subs
+    union
+    select channel, signup_week from spend
+),
+
 -- The estimate below is referenced twice in the final select, so it is computed
 -- once here rather than repeated -- a select alias cannot be reused inside the
 -- same select list.
 joined as (
     select
-        w.channel,
-        w.signup_week,
-        w.new_subscriptions,
-        w.mature_subscriptions,
-        w.activated_subscriptions,
+        cw.channel,
+        cw.signup_week,
+        -- Counts coalesce to 0: a week that acquired nobody acquired zero, and
+        -- leaving these null would make `sum` skip the row and quietly restore
+        -- the same understatement in the semantic layer. The per-subscription
+        -- averages below deliberately stay null -- a week with no subscriptions
+        -- has no average price or margin, and coalescing those to 0 would drag
+        -- every roll-up of them toward zero.
+        coalesce(w.new_subscriptions, 0) as new_subscriptions,
+        coalesce(w.mature_subscriptions, 0) as mature_subscriptions,
+        coalesce(w.activated_subscriptions, 0) as activated_subscriptions,
         w.avg_price,
-        w.mrr_usd,
+        coalesce(w.mrr_usd, 0) as mrr_usd,
         w.contribution_margin_per_subscription,
-        w.total_contribution_margin_usd,
+        coalesce(w.total_contribution_margin_usd, 0) as total_contribution_margin_usd,
         s.spend_usd,
         -- Estimated eventual activations across the whole acquired cohort: the
         -- activation rate observed among the week's *mature* accounts, applied
@@ -2744,8 +2841,11 @@ joined as (
         -- then, and an absent number is honest where a censored one is not.
         (w.activated_subscriptions * 1.0 / nullif(w.mature_subscriptions, 0))
             * w.new_subscriptions as estimated_activated_subscriptions
-    from weekly_subs w
-    left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
+    from channel_weeks cw
+    left join weekly_subs w
+        on cw.channel = w.channel and cw.signup_week = w.signup_week
+    left join spend s
+        on cw.channel = s.channel and cw.signup_week = s.signup_week
 )
 
 select

@@ -61,20 +61,41 @@ spend as (
     from {{ ref('fct_marketing_spend') }}
 ),
 
+-- The grain is every (channel, week) either side knows about, not just the weeks
+-- that produced signups. Driving the model off the signup weeks alone and
+-- left-joining spend onto them drops any week that spent money without
+-- converting anyone -- and the week that always fits that description is the
+-- last one, because its spend has not had time to convert yet. That is 7% of
+-- this launch's spend leaving the warehouse silently: every surviving row stays
+-- internally consistent, so nothing fails. `union` and not `union all`: a
+-- channel-week present on both sides must yield one row, or the surrogate key
+-- stops being unique and every measure double-counts.
+channel_weeks as (
+    select channel, signup_week from weekly_subs
+    union
+    select channel, signup_week from spend
+),
+
 -- The estimate below is referenced twice in the final select, so it is computed
 -- once here rather than repeated -- a select alias cannot be reused inside the
 -- same select list.
 joined as (
     select
-        w.channel,
-        w.signup_week,
-        w.new_subscriptions,
-        w.mature_subscriptions,
-        w.activated_subscriptions,
+        cw.channel,
+        cw.signup_week,
+        -- Counts coalesce to 0: a week that acquired nobody acquired zero, and
+        -- leaving these null would make `sum` skip the row and quietly restore
+        -- the same understatement in the semantic layer. The per-subscription
+        -- averages below deliberately stay null -- a week with no subscriptions
+        -- has no average price or margin, and coalescing those to 0 would drag
+        -- every roll-up of them toward zero.
+        coalesce(w.new_subscriptions, 0) as new_subscriptions,
+        coalesce(w.mature_subscriptions, 0) as mature_subscriptions,
+        coalesce(w.activated_subscriptions, 0) as activated_subscriptions,
         w.avg_price,
-        w.mrr_usd,
+        coalesce(w.mrr_usd, 0) as mrr_usd,
         w.contribution_margin_per_subscription,
-        w.total_contribution_margin_usd,
+        coalesce(w.total_contribution_margin_usd, 0) as total_contribution_margin_usd,
         s.spend_usd,
         -- Estimated eventual activations across the whole acquired cohort: the
         -- activation rate observed among the week's *mature* accounts, applied
@@ -87,8 +108,11 @@ joined as (
         -- then, and an absent number is honest where a censored one is not.
         (w.activated_subscriptions * 1.0 / nullif(w.mature_subscriptions, 0))
             * w.new_subscriptions as estimated_activated_subscriptions
-    from weekly_subs w
-    left join spend s on w.channel = s.channel and w.signup_week = s.signup_week
+    from channel_weeks cw
+    left join weekly_subs w
+        on cw.channel = w.channel and cw.signup_week = w.signup_week
+    left join spend s
+        on cw.channel = s.channel and cw.signup_week = s.signup_week
 )
 
 select

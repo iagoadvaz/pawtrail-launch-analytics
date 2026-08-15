@@ -82,10 +82,23 @@ models:
       - name: new_subscriptions
         tests:
           - not_null
-      # Guards the spend join: every grouped row has at least one subscription,
-      # so cac can only be null if fct_marketing_spend failed to join. Without
-      # this test a week-boundary mismatch produces an all-null CAC chart and
-      # still builds green.
+      # Guards the spend join: on a week that acquired somebody, cac can only be
+      # null if fct_marketing_spend failed to join. Without this test a
+      # week-boundary mismatch produces an all-null CAC chart and still builds
+      # green.
+      #
+      # The `where` is what makes the guard honest rather than merely quiet. The
+      # model carries every week that spent money, including weeks that acquired
+      # nobody -- the last week of a launch always looks like that, since its
+      # spend has not converted yet -- and cac is genuinely undefined there:
+      # dividing real spend by zero subscriptions has no answer, and 0 or
+      # infinity would both be inventions. Dropping the test instead would give
+      # up the join guard entirely; scoping it keeps it exactly as strong as it
+      # was for the rows it was written about. The complementary direction --
+      # spend that never reaches the mart at all -- is
+      # assert_channel_economics_spend_reconciles.
       - name: cac
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "new_subscriptions > 0"
