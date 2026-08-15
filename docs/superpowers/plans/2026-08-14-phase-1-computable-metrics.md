@@ -641,7 +641,7 @@ joined as (
         a.channel,
         a.pet_tier,
         a.signup_week,
-        a.observable_cycles,
+        a.renewals_faced,
         p.monthly_price_usd,
         p.recurring_cost_per_cycle,
         p.contribution_margin_per_cycle,
@@ -755,19 +755,36 @@ print(c.sql('''
 ```
 
 Expected, measured against the current warehouse: `self_serve` average CAC
-**$7.14** with breakeven of **1** cycle; `sales_assisted` **$26.55** with
-breakeven of **2**. Average per-cycle margin **$14.27**. `share_in_window`
-should read about **0.93** for self_serve and **0.79** for sales_assisted.
+**$6.56** with a median breakeven of **1** cycle (max 5); `sales_assisted`
+**$24.87** with a median of **2** (max 42, on the sparsest launch weeks).
+Average per-cycle margin **$14.27**. `share_in_window` should read **0.929**
+for self_serve and **0.790** for sales_assisted.
 
 **If `sales_assisted` comes out with a lower breakeven than `self_serve`, stop
 and report** — the CAC join allocated the wrong week or channel.
 
-**Two caveats on the CAC figures.** (1) They assume the `fct_weekly_channel_economics`
-spend leak is fixed — see finding F1 in the metric-correctness review. Against
-the unfixed mart these read $6.56 and $24.87, which is 7% low across the board.
-(2) `share_in_window` reads 0.887 / 0.633 if the `breakeven_within_window`
-comparison is written against `renewals_faced` instead of `renewals_faced + 1`;
-those are the off-by-one values, not the correct ones.
+**Do not "correct" $6.56 to $7.14.** Those are two different quantities and both
+are right. `cac_by_channel` divides a channel's whole spend by the accounts it
+acquired and reads **$7.14 / $26.55**; this model allocates each account the CAC
+of the *week and channel it signed up in*, and the launch's final spend week
+acquired nobody, so its $1,218.73 and $1,513.65 attach to no account and cannot
+enter an account-level average. The 8% gap between the two figures **is** that
+unconverted spend. Both belong on the dashboard — a channel's cost of
+acquisition and an account's allocated share of it — and a reader who compares
+them will notice, so METRICS.md must say which is which.
+
+This is worth stating explicitly because the gap looks exactly like a bug that
+was fixed earlier in this project: finding F1 in the metric-correctness review
+was a 7% spend leak that made `cac_by_channel` read $6.56 / $24.87 for the
+whole-channel question. Same numbers, different reason. Seeing $6.56 here does
+**not** mean F1 has regressed — verify F1 with
+`assert_channel_economics_spend_reconciles`, not with this model.
+
+**One caveat on `share_in_window`:** it reads 0.887 / 0.633 if the
+`breakeven_within_window` comparison is written against `renewals_faced`
+instead of `renewals_faced + 1`. Those are the off-by-one values, not the
+correct ones — 339 accounts sit at `renewals_faced = 0`, and 88 of them have
+already covered their CAC on their first charge.
 
 - [ ] **Step 8: Commit**
 
