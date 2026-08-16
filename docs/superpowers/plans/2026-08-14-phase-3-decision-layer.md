@@ -724,11 +724,18 @@ def test_writes_the_file(tmp_path, control_dir):
 
 - [ ] **Step 2: Register the directory in testpaths**
 
-In `pyproject.toml`, change:
+In `pyproject.toml`, **append** `dashboard` to the existing list rather than
+replacing it:
 
 ```toml
-testpaths = ["data", "generator", "dashboard"]
+testpaths = ["data", "generator", "semantic_tests", "dashboard"]
 ```
+
+`semantic_tests` must survive. It holds the attach-rate grain checks and the
+METRICS.md consistency guards, and dropping it from `testpaths` does not fail --
+pytest simply stops collecting them, so the suite goes green with less coverage
+than it had. Writing the line out in full, as an earlier draft did, silently
+retired both suites the moment this step ran.
 
 - [ ] **Step 3: Run them to confirm they fail**
 
@@ -1169,8 +1176,8 @@ The validator covers colour, not layout. Open the file and visually check for la
 
 ```bash
 echo "file://$(pwd)/dashboard/index.html"
-grep -c "not observable" dashboard/index.html   # expected: 5
-grep -c "PHASE 2" dashboard/index.html          # expected: >= 5
+grep -o "not observable" dashboard/index.html | wc -l   # expected: 5
+grep -o "PHASE 2" dashboard/index.html | wc -l          # expected: >= 5
 ```
 
 - [ ] **Step 3: Write the Tableau workbook specification**
@@ -1188,7 +1195,10 @@ cd pawtrail_dbt && ../.venv/bin/dbt build 2>&1 | tail -4
 cd .. && .venv/bin/pytest -q 2>&1 | tail -3
 ```
 
-Expected: `ERROR=0`; pytest with 29 passed (22 from the baseline + 7 from the dashboard), or 38 if Phase 2 was executed.
+Expected: `dbt build` at **PASS=234 ERROR=0** and pytest at **46 passed** when
+all three phases are executed in order (30 baseline + 9 lifecycle + 7 dashboard).
+On Phase 1 alone it is 191 and 37. Earlier drafts said 29 or 38, which predate
+the semantic_tests/ and documentation suites on the implementation branch.
 
 Check the spec's global acceptance criteria:
 - §6.1 `METRICS.md:265` corrected → Phase 1

@@ -1514,18 +1514,27 @@ select
 from classified
 ```
 
-**The contraction definition is a known limitation, and it must be labelled.**
-Contraction here is *cash not billed this cycle*, not *subscription value lost*,
-so a one-cycle skip books the full price as contraction and the return books
-reactivation. That is internally consistent and it reconciles — but it means GRR
-and NRR read 0.68–0.80 and are **not comparable to any published NRR benchmark**,
-because a transient skip is being scored as a downgrade.
+**Contraction means one thing here, and METRICS.md must say which.** The bridge
+runs on *subscription value at the tier in force*, not on cash billed, so
+contraction is a tier downgrade and nothing else — a skip does not change what a
+live subscription is worth and never enters it. Skipped and paused revenue is
+published separately as `deferred_billings_usd`.
 
-Expansion is $340 at cycle 1 against $6,387.79 of contraction, of which ~$4,795
-is skip and pause that mostly returns. No parameterisation of a 2.2% upgrade rate
-on a ~$10 tier delta offsets a 20%+ churn hazard, so **item 2.7 removes the
-structural cap on NRR without making the number benchmark-comparable.** Say that
-plainly in METRICS.md rather than implying the upgrade arm resolved it.
+The separation is worth stating with its numbers, because it is the difference
+between a retention figure that means something and one that does not. Built on
+cash, cycle 1 contraction reads **$6,387.79**; on value it is **$140.00** of
+genuine downgrades plus **$6,247.79** of deferred billing, and those two sum to
+the old figure exactly — the line every retention reading rested on was 97.8%
+deferred revenue. GRR moves 0.685 → **0.770** at cycle 1 and 0.796 → **0.931** at
+cycle 3 as a result.
+
+**NRR still does not exceed 100%, and that is not what the fix was for.** It
+reads **0.775 / 0.898 / 0.934** against GRR **0.770 / 0.892 / 0.931**. Item 2.7
+removes the *structural* cap — expansion is non-zero and NRR sits above GRR at
+every cycle — but no parameterisation of a 2.2% upgrade rate on a ~$10 tier delta
+offsets a 20%+ first-cycle hazard. Label it in METRICS.md as a launch-cohort
+reading over at most four cycles, not benchmark-comparable, rather than implying
+the upgrade arm resolved it.
 
 The stronger fix, if this becomes worth the rework: define contraction and churn
 on subscription value at the tier in force, and publish skipped/paused revenue as
