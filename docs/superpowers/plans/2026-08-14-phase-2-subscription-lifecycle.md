@@ -1211,6 +1211,16 @@ In `_semantic_models.yml`:
         agg: count
         expr: subscription_state_key
         create_metric: true
+      # Denominator for skip_rate and pause_rate. NOT cycle_rows: cycle 0 is the
+      # initial purchase, where skipping and pausing are impossible by
+      # construction -- 3,000 rows, zero of each. Dividing by every account-cycle
+      # therefore puts a population that had no opportunity into the denominator
+      # and understates the rate by 41% (skip 0.0554 -> 0.0328). Renewal cycles
+      # are the only ones where the behaviour can occur.
+      - name: renewal_cycle_rows
+        agg: sum
+        expr: case when cycle_index > 0 then 1 else 0 end
+        create_metric: true
       - name: skipped_cycles
         agg: sum
         expr: case when state = 'skipped' then 1 else 0 end
@@ -1276,14 +1286,14 @@ In `_metrics.yml`:
     label: "Skip Rate per Cycle"
     type_params:
       numerator: skipped_cycles
-      denominator: cycle_rows
+      denominator: renewal_cycle_rows
 
   - name: pause_rate
     type: ratio
     label: "Pause Rate per Cycle"
     type_params:
       numerator: paused_cycles
-      denominator: cycle_rows
+      denominator: renewal_cycle_rows
 ```
 
 - [ ] **Step 5: Run and check against the planted parameters**
