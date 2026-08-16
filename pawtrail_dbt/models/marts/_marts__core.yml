@@ -101,3 +101,37 @@ models:
               arguments:
                 to: ref('fct_premium_base')
                 field: state
+
+  - name: fct_censoring_register
+    columns:
+      - name: metric_name
+        tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - 'activation_rate_30d'
+                  - 'activation_rate_14d'
+                  - 'activation_rate_7d'
+                  - 'digital_activation_rate_7d'
+                  - 'kit_sla_rate'
+      - name: denominator_accounts
+        tests:
+          - not_null
+      - name: excluded_accounts
+        tests:
+          - not_null
+
+  - name: fct_login_timing_distribution
+    columns:
+      - name: login_timing_band
+        tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['0-2', '3-7', '8-14', '15-30', 'never']
+      - name: accounts
+        tests:
+          - not_null

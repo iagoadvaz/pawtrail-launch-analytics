@@ -39,3 +39,9 @@ models:
       - name: is_at_risk
         tests:
           - not_null
+      - name: damage_class
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['healthy', 'system_inflicted', 'self_selected', 'ambiguous']

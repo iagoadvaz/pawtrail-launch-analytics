@@ -253,3 +253,93 @@ metrics:
     type_params:
       numerator: channel_total_contribution_margin_usd
       denominator: channel_new_subscriptions
+
+  # The share of the base that has not yet faced any renewal inside the 120-day
+  # window. This is the number that converts "churn is out of scope because we
+  # only have 120 days" from a prose caveat into a computed fact -- which is why
+  # it belongs on the dashboard rather than in a footnote.
+  - name: pct_base_never_rebilled
+    type: ratio
+    label: "Share of Base That Has Never Faced a Renewal"
+    type_params:
+      numerator: renewal_unexposed_accounts
+      denominator: assessable_base_accounts
+
+  # Cycles the average account must survive to pay for its own acquisition.
+  # Expressed as a sum over a count rather than `agg: average` over the column so
+  # that the metric sums correctly when the semantic layer rolls channels or
+  # weeks together -- an average of averages would weight a week of 3 signups the
+  # same as a week of 300, and a launch's earliest weeks are its smallest.
+  - name: avg_breakeven_cycles
+    type: ratio
+    label: "Average Cycles to Break Even"
+    type_params:
+      numerator: breakeven_cycles_sum
+      denominator: unit_economics_accounts
+
+  - name: contribution_margin_per_cycle
+    type: ratio
+    label: "Contribution Margin per Billing Cycle (steady state)"
+    type_params:
+      numerator: cycle_margin_usd
+      denominator: unit_economics_accounts
+
+  # What share of accounts reaches breakeven inside the horizon the 120-day
+  # window actually observed. Below 1.0, the remainder is an unproven bet, not
+  # measured payback.
+  - name: share_breakeven_cycle_exposed
+    type: ratio
+    label: "Share of Accounts Whose Breakeven Cycle Has Already Come Due"
+    type_params:
+      numerator: accounts_breakeven_within_window
+      denominator: unit_economics_accounts
+
+  # CAC loaded with the COGS and shipping that never earned anything. Built as a
+  # sum over a sum (rather than an average of an already-divided column) so that
+  # it rolls up correctly when aggregating weeks or channels.
+  - name: effective_cac
+    type: ratio
+    label: "Effective CAC (loaded with fulfillment waste)"
+    type_params:
+      numerator: loaded_spend_usd
+      denominator: effective_cac_new_subscriptions
+
+  - name: cac_uplift_pct
+    type: ratio
+    label: "How Much Reported CAC Understates the Real One"
+    type_params:
+      numerator: fulfillment_waste_usd
+      denominator: nominal_spend_usd
+
+  - name: state_penetration
+    type: ratio
+    label: "Penetration of the Eligible Base (by state)"
+    type_params:
+      numerator: saturation_cumulative_subscriptions
+      denominator: saturation_eligible_accounts
+
+  # 30-day activation against the market benchmark. Same pattern as
+  # attach_rate_vs_target: 1.0 means exactly at benchmark, so the dashboard needs
+  # no separate reference line that could drift from the number in the memo.
+  #
+  # This project runs BELOW 1.0 across most of the window -- which is precisely
+  # why the metric exists. `activation_rate_30d` has always been on the dashboard
+  # and has never been compared against anything.
+  - name: activation_rate_30d_vs_benchmark
+    type: derived
+    label: "30-Day Activation vs. Market Benchmark (1.0 = at benchmark)"
+    type_params:
+      expr: rate / {{ var('activation_rate_benchmark') }}
+      metrics:
+        - name: activation_rate_30d
+          alias: rate
+
+  # The share of the mature cohort that never logged in. Thresholded by the
+  # Phase 3 decision contract in place of avg_days_to_first_login, which moves
+  # the wrong way when onboarding degrades.
+  - name: never_logged_in_share
+    type: ratio
+    label: "Share of Mature Cohort That Never Logged In"
+    type_params:
+      numerator: never_logged_in_accounts
+      denominator: mature_accounts_30d

@@ -1,11 +1,11 @@
 # PawTrail Launch Analytics — Metrics Dictionary
 
 This is a human-readable companion to the MetricFlow semantic layer defined in
-`pawtrail_dbt/models/marts/_metrics.yml` (33 metrics) and
-`pawtrail_dbt/models/marts/_semantic_models.yml` (8 semantic models). Every
+`pawtrail_dbt/models/marts/_metrics.yml` (42 metrics) and
+`pawtrail_dbt/models/marts/_semantic_models.yml` (11 semantic models). Every
 metric below is queryable via `mf query --metrics <name>`.
 
-**`mf list metrics` returns 62 names, not 33.** The 29 extras are not
+**`mf list metrics` returns 90 names, not 42.** The 48 extras are not
 undocumented metrics; they are the measures behind the 33, exposed as
 queryable names by `create_metric: true` on their declarations —
 `mature_accounts_30d`, `kits_shipped`, `channel_spend_usd`, `pitches_won` and
@@ -67,6 +67,17 @@ what addressable base.
 - **Definition:** Running total of PawTrail subscriptions attached to date.
 - **Formula:** `simple` — measure `cumulative_subscriptions`.
 - **Source:** `weekly_attach`
+
+### state_penetration
+- **Definition:** Share of a state's eligible Premium base that has attached, at the end of the launch window. Read beside `remaining_eligible_accounts`: a state decelerating near the ceiling of its own niche is not the same problem as a state with room left and weak demand, and treating them alike is the classic launch-window misdiagnosis.
+- **Formula:** `ratio` — `saturation_cumulative_subscriptions ÷ saturation_eligible_accounts`
+- **Source:** `state_saturation` (`fct_state_saturation`)
+
+### pct_base_never_rebilled
+- **Definition:** Share of the base that has not yet faced a single renewal inside the 120-day window — the number that turns "churn is out of scope because we only have 120 days" from a prose caveat into a computed fact.
+- **Formula:** `ratio` — `renewal_unexposed_accounts ÷ assessable_base_accounts`
+- **Source:** `accounts` (`dim_accounts`, via `int_billing_cycles`)
+- **Grain:** Read **ungrouped**. Grouped by `account__cycle_exposure_cohort` it is tautological — cohort `'0'` *is* the definition of "no renewal faced", so the ratio's numerator is its own denominator there and the row reads 1.0. The cohort cut answers a count question (`assessable_base_accounts`), not a rate one.
 
 ---
 
@@ -144,6 +155,18 @@ plus early-warning zero-engagement counts.
 - **Formula:** `simple` — measure `zero_task_accounts`.
 - **Source:** `activation_events`
 
+### never_logged_in_share
+- **Definition:** Share of the 30-day-mature cohort that never logged in at all.
+- **Formula:** `ratio` — `never_logged_in_accounts ÷ mature_accounts_30d`
+- **Source:** `activation_events`
+- **Assumption:** This is the metric that sees what `avg_days_to_first_login` cannot. That mean is computed only over accounts that *did* log in, so it **improves as onboarding gets worse** — 300 more accounts never logging in makes it shorter, not longer. Threshold the censored share, never the mean.
+
+### activation_rate_30d_vs_benchmark
+- **Definition:** The 30-day activation rate expressed as a fraction of the market benchmark, so 1.0 means "at benchmark" and the dashboard needs no separate reference line that could drift from the memo.
+- **Formula:** `derived` — `rate ÷ activation_rate_benchmark` (dbt var, 0.70), where `rate` aliases `activation_rate_30d`.
+- **Source:** `activation_events` (via `activation_rate_30d`)
+- **Note:** Reads **1.0157** on the current warehouse — marginally *above* benchmark, not below. Any claim that activation has fallen below benchmark is reporting censoring, not performance: the apparent crossing comes from a week at 76% maturity.
+
 ---
 
 ## 3. Kit operations
@@ -218,6 +241,35 @@ performance.
 - **Formula:** `ratio` — `channel_spend_usd ÷ channel_total_contribution_margin_usd`
 - **Source:** `weekly_channel_economics`
 - **Assumption:** Contribution margin is `monthly_price − kit_cogs − shipping_cost`, which charges the kit and its shipping — **one-time** costs, incurred once at fulfilment — against **every** month. Payback is therefore conservative: it is the number of months to recover CAC if the kit had to be re-bought monthly, so the true figure is shorter than the one reported here. The alternative, amortising fulfilment across an assumed lifetime, needs a retention curve this launch window cannot supply — twelve-month churn is one of the metrics deferred for exactly that reason — so the assumption is stated rather than modelled.
+
+### effective_cac
+- **Definition:** CAC loaded with the fulfillment waste it bought — the COGS and shipping spent on kits that were lost or that went to accounts which never activated. Nominal CAC counts marketing spend only, so a channel that buys cheap accounts which never show up looks like the efficient one.
+- **Formula:** `ratio` — `loaded_spend_usd ÷ effective_cac_new_subscriptions`
+- **Source:** `effective_cac_row` (`fct_weekly_channel_effective_cac`)
+
+### cac_uplift_pct
+- **Definition:** How much nominal CAC understates the real one, as a share of its own base. Algebraically identical to `effective_cac ÷ cac_by_channel − 1` at every grain.
+- **Formula:** `ratio` — `fulfillment_waste_usd ÷ nominal_spend_usd`
+- **Source:** `effective_cac_row`
+- **Note:** The direction is the finding: self-serve carries roughly a 51% uplift against sales-assisted's 13%, so the channel that looks cheapest on nominal CAC is the one waste hits hardest.
+
+### avg_breakeven_cycles
+- **Definition:** Average number of billing cycles an account must survive to repay its own acquisition cost, using observed facts only — no survival curve and no assumed lifetime. This is the honest substitute for LTV:CAC inside a 120-day window.
+- **Formula:** `ratio` — `breakeven_cycles_sum ÷ unit_economics_accounts`
+- **Source:** `unit_economics` (`fct_subscription_unit_economics`)
+- **Assumption:** `breakeven_cycles` is `ceil()`'d, so it is an integer per account: a threshold on it must use `>=`, never `>`. Null — never 0 and never infinity — when the per-cycle margin is not positive, because an account that never pays back does not "break even in 0 cycles".
+
+### share_breakeven_cycle_exposed
+- **Definition:** Share of accounts whose breakeven cycle has actually come due inside the observed window. Turns right-censoring into a column rather than a caveat: without it, a per-channel breakeven average silently mixes proven accounts with unproven ones.
+- **Formula:** `ratio` — `accounts_breakeven_within_window ÷ unit_economics_accounts`
+- **Source:** `unit_economics`
+- **Assumption:** The comparison is `breakeven_cycles <= renewals_faced + 1`, not `<= renewals_faced`. The billing spine is 0-based — cycle 0 is the initial purchase — so an account at zero renewals has already been charged once. Comparing charges needed against renewals faced reports every such account as unrecovered even when one charge already covered its CAC; 339 accounts sit there, 88 of which had already paid back.
+
+### contribution_margin_per_cycle
+- **Definition:** Contribution margin per billing cycle in steady state, charging COGS and shipping **every** cycle. This is a physical-box subscription: the kit ships each time.
+- **Formula:** `ratio` — `cycle_margin_usd ÷ unit_economics_accounts`
+- **Source:** `unit_economics`
+- **Note:** Deliberately distinct from `contribution_margin_per_subscription`, which charges fulfillment once and is therefore a first-cycle reading. Both are legitimate and neither should be renamed to resemble the other.
 
 ---
 

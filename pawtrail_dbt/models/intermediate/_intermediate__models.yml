@@ -22,3 +22,23 @@ models:
       - name: is_mature_30d
         tests:
           - not_null
+
+  - name: int_billing_cycles
+    columns:
+      - name: billing_cycle_key
+        tests:
+          - unique
+          - not_null
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_subscriptions')
+                field: account_id
+      - name: cycle_index
+        tests:
+          - not_null
+      - name: renewal_due_date
+        tests:
+          - not_null

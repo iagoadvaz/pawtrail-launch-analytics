@@ -41,6 +41,26 @@ vars:
   # flatter the result. It lives here, not in a Tableau constant, so the target
   # on the chart and the target quoted in NARRATIVE.md cannot disagree.
   attach_rate_launch_target: 0.15
+  # Market benchmark cited by Crystallize (spec §1.6). It lives here rather than
+  # in a dashboard constant for the same reason as attach_rate_launch_target: the
+  # target on the chart and the target quoted in the memo cannot disagree.
+  activation_rate_benchmark: 0.70
+  # Tenure below which a never-logged-in account with no delivery defect reads
+  # as self-selected rather than as damage the company inflicted. Calibrated
+  # against the observed tenure distribution, NOT taken from a rule of thumb --
+  # see the comment in fct_at_risk_accounts.sql.
+  self_selected_tenure_days: 365
+  # The subscription's billing interval. PawTrail is monthly; the var exists so
+  # that the cycle clock and the unit economics read the same cadence from one
+  # source, and so that a scenario test (quarterly) is a one-line change rather
+  # than a find-and-replace across SQL.
+  billing_cycle_months: 1
+  # Ceiling of the cycle spine. The simulated window is 120 days, so no account
+  # can have more than 4 monthly renewals come due. It doubles as a guard: if the
+  # window grows and this var does not, the model silently stops counting cycles
+  # -- which is why Task 1 ships a check that fails if any account hits the
+  # ceiling.
+  max_billing_cycles: 4
 
 models:
   pawtrail:

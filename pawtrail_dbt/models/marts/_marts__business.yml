@@ -102,3 +102,98 @@ models:
           - not_null:
               config:
                 where: "new_subscriptions > 0"
+
+  - name: fct_subscription_unit_economics
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+      - name: contribution_margin_per_cycle
+        tests:
+          - not_null
+      - name: allocated_cac_usd
+        tests:
+          - not_null
+      - name: breakeven_cycles
+        tests:
+          - not_null
+
+  - name: fct_fulfillment_waste
+    columns:
+      - name: account_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: waste_reason
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['kit_lost', 'late_kit_no_activation', 'never_logged_in']
+      - name: wasted_fulfillment_usd
+        tests:
+          - not_null
+
+  - name: fct_weekly_channel_effective_cac
+    columns:
+      - name: effective_cac_key
+        tests:
+          - unique
+          - not_null
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['self_serve', 'sales_assisted']
+      - name: new_subscriptions
+        tests:
+          - not_null
+      # Scoped to weeks that acquired somebody, for the same reason the `cac`
+      # test on fct_weekly_channel_economics is. That mart carries every week
+      # that spent money, including the launch's final week, which converted
+      # nobody -- effective_cac divides by new_subscriptions and is genuinely
+      # undefined there. Unscoped, this test fails on exactly those 2 rows the
+      # moment the F1 spend-leak fix lands, and F1 is a prerequisite of this
+      # phase. The complementary guard, that no spend goes missing, is
+      # assert_channel_economics_spend_reconciles upstream.
+      - name: effective_cac
+        tests:
+          - not_null:
+              config:
+                where: "new_subscriptions > 0"
+      - name: wasted_fulfillment_usd
+        tests:
+          - not_null
+
+  - name: fct_state_saturation
+    columns:
+      - name: state
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_premium_base')
+                field: state
+      - name: penetration
+        tests:
+          - not_null
+      - name: margin_share
+        tests:
+          - not_null

@@ -1,0 +1,6 @@
+metric_name,denominator_accounts,excluded_accounts,excluded_share
+activation_rate_30d,2661,339,0.113
+activation_rate_14d,2903,97,0.03233333333333333
+activation_rate_7d,2937,63,0.021
+kit_sla_rate,2937,63,0.021
+digital_activation_rate_7d,2960,40,0.013333333333333334
