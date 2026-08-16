@@ -21,6 +21,20 @@ The exports themselves are semantic-layer queries (`mf query`) — see
 `docs/superpowers/plans/2026-08-12-pawtrail-launch-analytics.md` Task 15 and the
 Phase 1 and 2 plans for the later additions.
 
+## The Tableau build reference
+
+`workbook_mock.html` is a working mock of the workbook as seven tabs, built from
+these same `control_*.csv` extracts. It is not the deliverable — `index.html` is
+— and the two answer different questions. `index.html` is the generated static
+page organised around the four decision questions; the mock is the sheet-by-sheet
+reference for rebuilding this in Tableau Public, where each tab is one dashboard
+and each card names the CSV feeding it in its own title bar.
+
+`WORKBOOK_SPEC.md` carries the tab-to-extract map and the three conventions most
+easily lost in a hand rebuild: reference lines rather than ratio bars, the
+cohort-weighted rate rather than the newest cohort on any headline tile, and
+counts rather than rates wherever the denominator is tautological.
+
 ## Views
 
 1. Launch pulse — cumulative and weekly new subscriptions, attach rate trend

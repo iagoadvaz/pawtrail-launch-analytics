@@ -90,7 +90,16 @@ mf query --metrics activation_rate_30d --group-by metric_time__week
 
 ## Out of scope (by design)
 
-12-month churn, NRR, LTV, LTV:CAC, Rule of 40 — these require months of
-retention data this launch window doesn't have yet. See
-`docs/superpowers/specs/2026-08-12-pawtrail-launch-analytics-design.md`
+LTV, LTV:CAC, Rule of 40 and 12-month churn are not computed. They need months
+of retention data this launch window does not have, and a figure derived from
+four billing cycles would carry a name that promises a year.
+
+Retention itself **is** computed, with the same caveat attached to it rather
+than used to suppress it. `gross_revenue_retention`, `net_revenue_retention`
+and `monthly_churn_rate` are launch-cohort figures over at most four cycles,
+not benchmark-comparable rates — NRR reads 0.77–0.93 here because a 2.2%
+upgrade rate cannot offset a 20%+ first-cycle hazard. Read them as the shape of
+the curve this window can actually show. METRICS.md states the bound on each.
+
+See `docs/superpowers/specs/2026-08-12-pawtrail-launch-analytics-design.md`
 §2 and §6 for the reasoning.
