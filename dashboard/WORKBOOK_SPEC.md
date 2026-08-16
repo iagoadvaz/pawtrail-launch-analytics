@@ -89,3 +89,36 @@ Two rules govern it:
 - **Thresholds are never tuned to fit the data.** If a metric does not trigger,
   the finding is the metric. A threshold moved to fit an observation cannot
   afterwards be evidence about that observation.
+
+## The tab-by-tab mock
+
+`workbook_mock.html` in this directory is a working mock of the workbook, built
+from these same `control_*.csv` extracts. It exists to be copied: each of its
+seven tabs is one Tableau dashboard, and each card names the CSV that feeds it
+in its own title bar.
+
+| Tab | Tableau dashboard | Sheets | Extracts |
+|---|---|---|---|
+| 1 | Launch Pulse | attach-rate trend vs. target line, weekly signups bar, penetration by state, attach by state | `attach_rate`, `weekly_new_subscriptions`, `state_saturation`, `attach_rate_by_state` |
+| 2 | Activation | five activation rates over time, time-to-first-login distribution, censoring register | `activation_rates`, `login_timing`, `censoring_register` |
+| 3 | Kit Operations | on-time by state, loss by state, time to milestone | `kit_sla_by_state`, `time_to_milestone` |
+| 4 | Acquisition Efficiency | nominal vs. effective CAC, cycles to break even, cost per activated over time | `effective_cac`, `breakeven_by_channel`, `cac_by_channel` |
+| 5 | Retention & Lifecycle | survival and hazard by cycle, skip/pause by cycle, MRR movement | `lifecycle_by_cycle`, `skip_and_pause`, `mrr_movement`, `base_never_rebilled` |
+| 6 | CS Queue | at-risk by driver, at-risk rate by state, damage classification | `at_risk_by_driver`, `at_risk_by_state`, `at_risk_by_damage_class` |
+| 7 | Decision Contract | one table per decision question, 29 rows | `decision_contract` |
+
+Three conventions in the mock are load-bearing and easy to lose when rebuilding
+by hand:
+
+- **Reference lines, not ratio bars.** Attach rate is plotted against a 15%
+  target line and activation against a 70% benchmark line. Plotting
+  `attach_rate_vs_target` as a bar reads as on-plan only to someone who already
+  knows the plan.
+- **The headline is the cohort-weighted rate, not the newest cohort.** 30-day
+  activation reads 71.1% across all 2,661 matured accounts. The newest cohort
+  reads 60.3% only because a quarter of it has not finished its window; putting
+  that on the headline tile reports censoring as performance.
+- **Counts where a rate would be tautological.** The CS queue splits by driver
+  as counts, because `risk_driver` is assigned from the same flags that define
+  at-risk — a rate there is 1.0 in every bucket by construction. The rate goes
+  on the state cut, where the denominator is a different population.

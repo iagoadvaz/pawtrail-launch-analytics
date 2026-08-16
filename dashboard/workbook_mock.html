@@ -1,0 +1,723 @@
+<title>PawTrail Launch Workbook</title>
+<style>
+:root{
+  color-scheme: light;
+  --ground:#eef0f4; --surface:#fbfcfd; --surface-2:#f3f5f8;
+  --ink:#12151a; --ink-2:#4a515c; --ink-3:#767e8b;
+  --rule:#dde1e8; --rule-2:#c8cdd7;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
+  --good:#1a7f4b; --good-bg:#e4f2ea; --warn:#9a6800; --warn-bg:#fbf0d8;
+  --crit:#b3261e; --crit-bg:#fbe6e4;
+  --grid:#e6e9ef; --tabbar:#e3e6ec;
+  --ui:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --ground:#0e1013; --surface:#171a1f; --surface-2:#1e222a;
+    --ink:#e9ecf1; --ink-2:#a8b0bd; --ink-3:#79818f;
+    --rule:#2a2f38; --rule-2:#3a414d;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+    --good:#5cc98d; --good-bg:#12291d; --warn:#e0ac3a; --warn-bg:#2c2412;
+    --crit:#f08a82; --crit-bg:#2e1614;
+    --grid:#242932; --tabbar:#1b1f26;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ground:#0e1013; --surface:#171a1f; --surface-2:#1e222a;
+  --ink:#e9ecf1; --ink-2:#a8b0bd; --ink-3:#79818f;
+  --rule:#2a2f38; --rule-2:#3a414d;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+  --good:#5cc98d; --good-bg:#12291d; --warn:#e0ac3a; --warn-bg:#2c2412;
+  --crit:#f08a82; --crit-bg:#2e1614;
+  --grid:#242932; --tabbar:#1b1f26;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--ui);
+  font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+.wb{max-width:1280px;margin:0 auto;padding:18px 16px 0}
+.wb-head{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:baseline;
+  padding-bottom:14px;border-bottom:1px solid var(--rule-2)}
+.wb-title{font-size:19px;font-weight:650;letter-spacing:-.01em;margin:0}
+.wb-sub{font-size:12.5px;color:var(--ink-2);margin:0}
+.wb-meta{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+/* --- tab strip: one tab per Tableau dashboard --- */
+.tabs{display:flex;gap:2px;overflow-x:auto;background:var(--tabbar);
+  border:1px solid var(--rule-2);border-top:0;border-radius:0 0 6px 6px;padding:0 4px;
+  scrollbar-width:thin}
+.tab{flex:0 0 auto;appearance:none;border:0;background:transparent;color:var(--ink-2);
+  font-family:var(--ui);font-size:12.5px;font-weight:520;letter-spacing:.005em;
+  padding:9px 14px 8px;cursor:pointer;border-bottom:2.5px solid transparent;
+  white-space:nowrap}
+.tab:hover{color:var(--ink);background:color-mix(in srgb,var(--surface) 55%,transparent)}
+.tab[aria-selected="true"]{color:var(--ink);background:var(--surface);
+  border-bottom-color:var(--s1);font-weight:640}
+.tab:focus-visible{outline:2px solid var(--s1);outline-offset:-2px}
+.tab .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-right:6px}
+.tab[aria-selected="true"] .n{color:var(--s1)}
+/* --- canvas --- */
+.canvas{padding:16px 0 26px}
+.panel[hidden]{display:none}
+.lede{color:var(--ink-2);font-size:13px;max-width:76ch;margin:0 0 14px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(12,1fr)}
+.sheet{grid-column:span 12;background:var(--surface);border:1px solid var(--rule);
+  border-radius:7px;overflow:hidden;display:flex;flex-direction:column}
+.sheet.h6{grid-column:span 6}.sheet.h4{grid-column:span 4}.sheet.h8{grid-column:span 8}
+.sheet.h5{grid-column:span 5}.sheet.h7{grid-column:span 7}
+@media(max-width:900px){.sheet,.sheet.h6,.sheet.h4,.sheet.h8,.sheet.h5,.sheet.h7{grid-column:span 12}}
+.sh-head{padding:9px 13px 8px;border-bottom:1px solid var(--rule);background:var(--surface-2);
+  display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.sh-title{font-size:12.5px;font-weight:640;margin:0;letter-spacing:.004em}
+.sh-src{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.sh-note{font-size:11.5px;color:var(--ink-2);padding:0 13px;margin:8px 0 0}
+.sh-body{padding:12px 13px 13px;flex:1}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;padding:0 13px 10px;margin:0}
+.lg{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2)}
+.lg i{width:10px;height:10px;border-radius:2px;flex:0 0 auto;display:inline-block}
+.lg.line i{height:3px;border-radius:2px;width:14px}
+/* --- stat tiles --- */
+.tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));
+  padding:12px 13px 13px}
+.tile{background:var(--surface-2);border:1px solid var(--rule);border-radius:6px;padding:10px 11px}
+.tile .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);
+  display:block;margin-bottom:5px}
+.tile .v{font-family:var(--mono);font-size:20px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums;display:block;line-height:1.15}
+.tile .d{font-size:11.5px;color:var(--ink-2);display:block;margin-top:3px}
+/* --- tables --- */
+.tw{overflow-x:auto;padding:0 13px 13px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--rule);white-space:nowrap}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.055em;color:var(--ink-3);
+  font-weight:600;background:var(--surface-2);position:sticky;top:0}
+td.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+tbody tr:hover{background:var(--surface-2)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:640;
+  padding:2px 7px;border-radius:99px;letter-spacing:.03em;text-transform:uppercase}
+.pill.trig{color:var(--crit);background:var(--crit-bg)}
+.pill.ok{color:var(--good);background:var(--good-bg)}
+.pill::before{content:"";width:6px;height:6px;border-radius:99px;background:currentColor}
+.seg{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+/* --- charts --- */
+svg{display:block;width:100%;height:auto;overflow:visible}
+.ax{font-family:var(--mono);font-size:9.5px;fill:var(--ink-3)}
+.axl{font-size:10px;fill:var(--ink-2)}
+.gl{stroke:var(--grid);stroke-width:1}
+.dl{font-family:var(--mono);font-size:9.5px;fill:var(--ink-2);font-weight:600}
+.hit{fill:transparent;cursor:crosshair}
+.tip{position:fixed;z-index:60;pointer-events:none;background:var(--surface);
+  border:1px solid var(--rule-2);border-radius:6px;padding:7px 9px;font-size:11.5px;
+  box-shadow:0 6px 20px rgba(0,0,0,.16);opacity:0;transition:opacity .09s;max-width:250px}
+.tip[data-on="1"]{opacity:1}
+.tip b{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tip .r{display:flex;gap:9px;justify-content:space-between;align-items:center}
+.tip .r i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+.tip .h{font-weight:650;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--rule)}
+.cross{stroke:var(--rule-2);stroke-width:1;stroke-dasharray:3 3}
+/* --- status bar --- */
+.status{border-top:1px solid var(--rule-2);padding:9px 2px 22px;display:flex;
+  flex-wrap:wrap;gap:6px 18px;font-family:var(--mono);font-size:11px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+.status b{color:var(--ink-2);font-weight:600}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wb">
+  <header class="wb-head">
+    <div>
+      <h1 class="wb-title">PawTrail Launch Workbook</h1>
+      <p class="wb-sub">Premium-to-PawTrail attach, 0&ndash;120 day launch window &middot; seven dashboards</p>
+    </div>
+    <div class="wb-meta" id="meta"></div>
+  </header>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="canvas" id="canvas"></div>
+  <div class="status" id="status"></div>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+window.__DATA__={"activation_rates":[{"metric_time__week":"2026-01-05","digital_activation_rate_7d":"0.45454545454545453","kit_sla_rate":"0.8636363636363636","activation_rate_7d":"0.4090909090909091","activation_rate_14d":"0.6818181818181818","activation_rate_30d":"0.7727272727272727","mature_cohort_size_30d":"22"},{"metric_time__week":"2026-01-12","digital_activation_rate_7d":"0.6086956521739131","kit_sla_rate":"0.8695652173913043","activation_rate_7d":"0.5434782608695652","activation_rate_14d":"0.6521739130434783","activation_rate_30d":"0.6739130434782609","mature_cohort_size_30d":"46"},{"metric_time__week":"2026-01-19","digital_activation_rate_7d":"0.7294117647058823","kit_sla_rate":"0.8470588235294118","activation_rate_7d":"0.5882352941176471","activation_rate_14d":"0.6941176470588235","activation_rate_30d":"0.7294117647058823","mature_cohort_size_30d":"85"},{"metric_time__week":"2026-01-26","digital_activation_rate_7d":"0.6804123711340206","kit_sla_rate":"0.865979381443299","activation_rate_7d":"0.5773195876288659","activation_rate_14d":"0.6494845360824743","activation_rate_30d":"0.7010309278350515","mature_cohort_size_30d":"97"},{"metric_time__week":"2026-02-02","digital_activation_rate_7d":"0.6387434554973822","kit_sla_rate":"0.8272251308900523","activation_rate_7d":"0.5445026178010471","activation_rate_14d":"0.6492146596858639","activation_rate_30d":"0.6910994764397905","mature_cohort_size_30d":"191"},{"metric_time__week":"2026-02-09","digital_activation_rate_7d":"0.6722689075630253","kit_sla_rate":"0.8361344537815126","activation_rate_7d":"0.5462184873949579","activation_rate_14d":"0.6554621848739496","activation_rate_30d":"0.7142857142857143","mature_cohort_size_30d":"238"},{"metric_time__week":"2026-02-16","digital_activation_rate_7d":"0.6630824372759857","kit_sla_rate":"0.8351254480286738","activation_rate_7d":"0.5591397849462365","activation_rate_14d":"0.6738351254480287","activation_rate_30d":"0.7132616487455197","mature_cohort_size_30d":"279"},{"metric_time__week":"2026-02-23","digital_activation_rate_7d":"0.6534954407294833","kit_sla_rate":"0.8328267477203647","activation_rate_7d":"0.5562310030395137","activation_rate_14d":"0.6717325227963525","activation_rate_30d":"0.723404255319149","mature_cohort_size_30d":"329"},{"metric_time__week":"2026-03-02","digital_activation_rate_7d":"0.648936170212766","kit_sla_rate":"0.8643617021276596","activation_rate_7d":"0.5531914893617021","activation_rate_14d":"0.675531914893617","activation_rate_30d":"0.699468085106383","mature_cohort_size_30d":"376"},{"metric_time__week":"2026-03-09","digital_activation_rate_7d":"0.6551724137931034","kit_sla_rate":"0.8448275862068966","activation_rate_7d":"0.5488505747126436","activation_rate_14d":"0.7011494252873564","activation_rate_30d":"0.7212643678160919","mature_cohort_size_30d":"348"},{"metric_time__week":"2026-03-16","digital_activation_rate_7d":"0.6268115942028986","kit_sla_rate":"0.8623188405797102","activation_rate_7d":"0.5398550724637681","activation_rate_14d":"0.6884057971014492","activation_rate_30d":"0.7246376811594203","mature_cohort_size_30d":"276"},{"metric_time__week":"2026-03-23","digital_activation_rate_7d":"0.6974789915966386","kit_sla_rate":"0.8739495798319328","activation_rate_7d":"0.6218487394957983","activation_rate_14d":"0.7100840336134454","activation_rate_30d":"0.7521008403361344","mature_cohort_size_30d":"238"},{"metric_time__week":"2026-03-30","digital_activation_rate_7d":"0.6444444444444445","kit_sla_rate":"0.7888888888888889","activation_rate_7d":"0.5055555555555555","activation_rate_14d":"0.6111111111111112","activation_rate_30d":"0.6029411764705882","mature_cohort_size_30d":"136"},{"metric_time__week":"2026-04-06","digital_activation_rate_7d":"0.7154471544715447","kit_sla_rate":"0.8943089430894309","activation_rate_7d":"0.6666666666666666","activation_rate_14d":"0.7479674796747967","activation_rate_30d":"","mature_cohort_size_30d":"0"},{"metric_time__week":"2026-04-13","digital_activation_rate_7d":"0.6","kit_sla_rate":"0.7866666666666666","activation_rate_7d":"0.4666666666666667","activation_rate_14d":"0.5866666666666667","activation_rate_30d":"","mature_cohort_size_30d":"0"},{"metric_time__week":"2026-04-20","digital_activation_rate_7d":"0.7368421052631579","kit_sla_rate":"0.8235294117647058","activation_rate_7d":"0.5294117647058824","activation_rate_14d":"","activation_rate_30d":"","mature_cohort_size_30d":"0"},{"metric_time__week":"2026-04-27","digital_activation_rate_7d":"","kit_sla_rate":"","activation_rate_7d":"","activation_rate_14d":"","activation_rate_30d":"","mature_cohort_size_30d":"0"}],"at_risk_by_damage_class":[{"account__damage_class":"ambiguous","at_risk_accounts":"485","recoverable_mrr_usd":"13625.149999999912"},{"account__damage_class":"healthy","at_risk_accounts":"0","recoverable_mrr_usd":""},{"account__damage_class":"self_selected","at_risk_accounts":"11","recoverable_mrr_usd":"299.89000000000004"},{"account__damage_class":"system_inflicted","at_risk_accounts":"448","recoverable_mrr_usd":"12455.519999999919"}],"at_risk_by_driver":[{"account__risk_driver":"both_legs_failed","at_risk_accounts":"96"},{"account__risk_driver":"digital_failure","at_risk_accounts":"496"},{"account__risk_driver":"healthy","at_risk_accounts":"0"},{"account__risk_driver":"physical_failure","at_risk_accounts":"352"}],"at_risk_by_state":[{"account__state":"CA","at_risk_account_rate":"0.3012951601908657","at_risk_accounts":"442"},{"account__state":"FL","at_risk_account_rate":"0.31805157593123207","at_risk_accounts":"111"},{"account__state":"GA","at_risk_account_rate":"0.359375","at_risk_accounts":"23"},{"account__state":"IL","at_risk_account_rate":"0.3","at_risk_accounts":"18"},{"account__state":"MI","at_risk_account_rate":"0.4411764705882353","at_risk_accounts":"15"},{"account__state":"NC","at_risk_account_rate":"0.3088235294117647","at_risk_accounts":"21"},{"account__state":"NJ","at_risk_account_rate":"0.5217391304347826","at_risk_accounts":"12"},{"account__state":"NY","at_risk_account_rate":"0.31794871794871793","at_risk_accounts":"62"},{"account__state":"OH","at_risk_account_rate":"0.5735294117647058","at_risk_accounts":"78"},{"account__state":"PA","at_risk_account_rate":"0.3064516129032258","at_risk_accounts":"19"},{"account__state":"TX","at_risk_account_rate":"0.32608695652173914","at_risk_accounts":"135"},{"account__state":"VA","at_risk_account_rate":"0.25806451612903225","at_risk_accounts":"8"}],"attach_rate":[{"weekly_attach_row__signup_week__week":"2026-01-05","cumulative_subscriptions_to_date":"22","attach_rate":"0.0014666666666666667","attach_rate_vs_target":"0.009777777777777778"},{"weekly_attach_row__signup_week__week":"2026-01-12","cumulative_subscriptions_to_date":"68","attach_rate":"0.004533333333333334","attach_rate_vs_target":"0.030222222222222227"},{"weekly_attach_row__signup_week__week":"2026-01-19","cumulative_subscriptions_to_date":"153","attach_rate":"0.0102","attach_rate_vs_target":"0.068"},{"weekly_attach_row__signup_week__week":"2026-01-26","cumulative_subscriptions_to_date":"250","attach_rate":"0.016666666666666666","attach_rate_vs_target":"0.11111111111111112"},{"weekly_attach_row__signup_week__week":"2026-02-02","cumulative_subscriptions_to_date":"441","attach_rate":"0.0294","attach_rate_vs_target":"0.196"},{"weekly_attach_row__signup_week__week":"2026-02-09","cumulative_subscriptions_to_date":"679","attach_rate":"0.04526666666666666","attach_rate_vs_target":"0.30177777777777776"},{"weekly_attach_row__signup_week__week":"2026-02-16","cumulative_subscriptions_to_date":"958","attach_rate":"0.06386666666666667","attach_rate_vs_target":"0.4257777777777778"},{"weekly_attach_row__signup_week__week":"2026-02-23","cumulative_subscriptions_to_date":"1287","attach_rate":"0.0858","attach_rate_vs_target":"0.5720000000000001"},{"weekly_attach_row__signup_week__week":"2026-03-02","cumulative_subscriptions_to_date":"1663","attach_rate":"0.11086666666666667","attach_rate_vs_target":"0.7391111111111112"},{"weekly_attach_row__signup_week__week":"2026-03-09","cumulative_subscriptions_to_date":"2011","attach_rate":"0.13406666666666667","attach_rate_vs_target":"0.8937777777777778"},{"weekly_attach_row__signup_week__week":"2026-03-16","cumulative_subscriptions_to_date":"2287","attach_rate":"0.15246666666666667","attach_rate_vs_target":"1.0164444444444445"},{"weekly_attach_row__signup_week__week":"2026-03-23","cumulative_subscriptions_to_date":"2525","attach_rate":"0.16833333333333333","attach_rate_vs_target":"1.1222222222222222"},{"weekly_attach_row__signup_week__week":"2026-03-30","cumulative_subscriptions_to_date":"2705","attach_rate":"0.18033333333333335","attach_rate_vs_target":"1.2022222222222223"},{"weekly_attach_row__signup_week__week":"2026-04-06","cumulative_subscriptions_to_date":"2828","attach_rate":"0.18853333333333333","attach_rate_vs_target":"1.256888888888889"},{"weekly_attach_row__signup_week__week":"2026-04-13","cumulative_subscriptions_to_date":"2903","attach_rate":"0.19353333333333333","attach_rate_vs_target":"1.2902222222222224"},{"weekly_attach_row__signup_week__week":"2026-04-20","cumulative_subscriptions_to_date":"2960","attach_rate":"0.19733333333333333","attach_rate_vs_target":"1.3155555555555556"},{"weekly_attach_row__signup_week__week":"2026-04-27","cumulative_subscriptions_to_date":"3000","attach_rate":"0.2","attach_rate_vs_target":"1.3333333333333335"}],"attach_rate_by_state":[{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"CA","attach_rate":"0.0011874721686210479"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"FL","attach_rate":"0.001597444089456869"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"GA","attach_rate":"0.002898550724637681"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"IL","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"MI","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"NC","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"NJ","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"NY","attach_rate":"0.0011337868480725624"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"OH","attach_rate":"0.005494505494505495"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"PA","attach_rate":"0.0036855036855036856"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"TX","attach_rate":"0.0014464802314368371"},{"weekly_attach_row__signup_week__week":"2026-01-05","weekly_attach_row__state":"VA","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"CA","attach_rate":"0.00445302063232893"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"FL","attach_rate":"0.007454739084132056"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"GA","attach_rate":"0.005797101449275362"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"IL","attach_rate":"0.0034071550255536627"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"MI","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"NC","attach_rate":"0.003048780487804878"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"NJ","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"NY","attach_rate":"0.0011337868480725624"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"OH","attach_rate":"0.009157509157509158"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"PA","attach_rate":"0.004914004914004914"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"TX","attach_rate":"0.003857280617164899"},{"weekly_attach_row__signup_week__week":"2026-01-12","weekly_attach_row__state":"VA","attach_rate":"0.004629629629629629"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"CA","attach_rate":"0.009796645391123645"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"FL","attach_rate":"0.011714589989350373"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"GA","attach_rate":"0.014492753623188406"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"IL","attach_rate":"0.010221465076660987"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"MI","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"NC","attach_rate":"0.009146341463414634"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"NJ","attach_rate":"0.011235955056179775"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"NY","attach_rate":"0.011337868480725623"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"OH","attach_rate":"0.016483516483516484"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"PA","attach_rate":"0.004914004914004914"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"TX","attach_rate":"0.010607521697203472"},{"weekly_attach_row__signup_week__week":"2026-01-19","weekly_attach_row__state":"VA","attach_rate":"0.013888888888888888"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"CA","attach_rate":"0.017515214487160456"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"FL","attach_rate":"0.01810436634717785"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"GA","attach_rate":"0.020289855072463767"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"IL","attach_rate":"0.01192504258943782"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"MI","attach_rate":"0.0"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"NC","attach_rate":"0.018292682926829267"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"NJ","attach_rate":"0.011235955056179775"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"NY","attach_rate":"0.018140589569160998"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"OH","attach_rate":"0.029304029304029304"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"PA","attach_rate":"0.007371007371007371"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"TX","attach_rate":"0.01639344262295082"},{"weekly_attach_row__signup_week__week":"2026-01-26","weekly_attach_row__state":"VA","attach_rate":"0.013888888888888888"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"CA","attach_rate":"0.030428974320914355"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"FL","attach_rate":"0.02875399361022364"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"GA","attach_rate":"0.03188405797101449"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"IL","attach_rate":"0.020442930153321975"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"MI","attach_rate":"0.009202453987730062"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"NC","attach_rate":"0.051829268292682924"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"NJ","attach_rate":"0.011235955056179775"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"NY","attach_rate":"0.03854875283446712"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"OH","attach_rate":"0.04212454212454213"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"PA","attach_rate":"0.013513513513513514"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"TX","attach_rate":"0.0313404050144648"},{"weekly_attach_row__signup_week__week":"2026-02-02","weekly_attach_row__state":"VA","attach_rate":"0.013888888888888888"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"CA","attach_rate":"0.048686358913462964"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"FL","attach_rate":"0.0463258785942492"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"GA","attach_rate":"0.05217391304347826"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"IL","attach_rate":"0.028960817717206135"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"MI","attach_rate":"0.015337423312883436"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"NC","attach_rate":"0.057926829268292686"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"NJ","attach_rate":"0.0149812734082397"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"NY","attach_rate":"0.05555555555555555"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"OH","attach_rate":"0.0641025641025641"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"PA","attach_rate":"0.018427518427518427"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"TX","attach_rate":"0.04725168756027001"},{"weekly_attach_row__signup_week__week":"2026-02-09","weekly_attach_row__state":"VA","attach_rate":"0.018518518518518517"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"CA","attach_rate":"0.06946712186433131"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"FL","attach_rate":"0.0670926517571885"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"GA","attach_rate":"0.057971014492753624"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"IL","attach_rate":"0.04088586030664395"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"MI","attach_rate":"0.03987730061349693"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"NC","attach_rate":"0.0701219512195122"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"NJ","attach_rate":"0.0149812734082397"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"NY","attach_rate":"0.07369614512471655"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"OH","attach_rate":"0.08241758241758242"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"PA","attach_rate":"0.025798525798525797"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"TX","attach_rate":"0.06846673095467695"},{"weekly_attach_row__signup_week__week":"2026-02-16","weekly_attach_row__state":"VA","attach_rate":"0.032407407407407406"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"CA","attach_rate":"0.09395873534214041"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"FL","attach_rate":"0.08732694355697551"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"GA","attach_rate":"0.08695652173913043"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"IL","attach_rate":"0.049403747870528106"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"MI","attach_rate":"0.046012269938650305"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"NC","attach_rate":"0.09146341463414634"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"NJ","attach_rate":"0.02247191011235955"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"NY","attach_rate":"0.09523809523809523"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"OH","attach_rate":"0.10989010989010989"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"PA","attach_rate":"0.0343980343980344"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"TX","attach_rate":"0.0940212150433944"},{"weekly_attach_row__signup_week__week":"2026-02-23","weekly_attach_row__state":"VA","attach_rate":"0.06018518518518518"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"CA","attach_rate":"0.12230963336796793"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"FL","attach_rate":"0.11288604898828541"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"GA","attach_rate":"0.11884057971014493"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"IL","attach_rate":"0.05792163543441227"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"MI","attach_rate":"0.06748466257668712"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"NC","attach_rate":"0.11280487804878049"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"NJ","attach_rate":"0.04868913857677903"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"NY","attach_rate":"0.11904761904761904"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"OH","attach_rate":"0.13553113553113552"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"PA","attach_rate":"0.04791154791154791"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"TX","attach_rate":"0.11909353905496625"},{"weekly_attach_row__signup_week__week":"2026-03-02","weekly_attach_row__state":"VA","attach_rate":"0.06944444444444445"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"CA","attach_rate":"0.14902775716194153"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"FL","attach_rate":"0.13631522896698617"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"GA","attach_rate":"0.13333333333333333"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"IL","attach_rate":"0.07155025553662692"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"MI","attach_rate":"0.07975460122699386"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"NC","attach_rate":"0.14939024390243902"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"NJ","attach_rate":"0.06367041198501873"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"NY","attach_rate":"0.14285714285714285"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"OH","attach_rate":"0.16117216117216118"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"PA","attach_rate":"0.05405405405405406"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"TX","attach_rate":"0.14127290260366443"},{"weekly_attach_row__signup_week__week":"2026-03-09","weekly_attach_row__state":"VA","attach_rate":"0.09259259259259259"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"CA","attach_rate":"0.16921478402849932"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"FL","attach_rate":"0.154419595314164"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"GA","attach_rate":"0.14202898550724638"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"IL","attach_rate":"0.07666098807495741"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"MI","attach_rate":"0.09202453987730061"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"NC","attach_rate":"0.1676829268292683"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"NJ","attach_rate":"0.06741573033707865"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"NY","attach_rate":"0.1689342403628118"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"OH","attach_rate":"0.184981684981685"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"PA","attach_rate":"0.06265356265356266"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"TX","attach_rate":"0.16104146576663453"},{"weekly_attach_row__signup_week__week":"2026-03-16","weekly_attach_row__state":"VA","attach_rate":"0.11574074074074074"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"CA","attach_rate":"0.18747216862104796"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"FL","attach_rate":"0.16719914802981894"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"GA","attach_rate":"0.15942028985507245"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"IL","attach_rate":"0.09028960817717206"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"MI","attach_rate":"0.09815950920245399"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"NC","attach_rate":"0.17682926829268292"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"NJ","attach_rate":"0.08239700374531835"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"NY","attach_rate":"0.1927437641723356"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"OH","attach_rate":"0.20695970695970695"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"PA","attach_rate":"0.06756756756756757"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"TX","attach_rate":"0.17405978784956605"},{"weekly_attach_row__signup_week__week":"2026-03-23","weekly_attach_row__state":"VA","attach_rate":"0.13425925925925927"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"CA","attach_rate":"0.20053436247587947"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"FL","attach_rate":"0.17784877529286475"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"GA","attach_rate":"0.17681159420289855"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"IL","attach_rate":"0.09540034071550256"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"MI","attach_rate":"0.09815950920245399"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"NC","attach_rate":"0.18902439024390244"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"NJ","attach_rate":"0.08239700374531835"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"NY","attach_rate":"0.20521541950113378"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"OH","attach_rate":"0.2326007326007326"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"PA","attach_rate":"0.07371007371007371"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"TX","attach_rate":"0.1875602700096432"},{"weekly_attach_row__signup_week__week":"2026-03-30","weekly_attach_row__state":"VA","attach_rate":"0.1388888888888889"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"CA","attach_rate":"0.21107317797239128"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"FL","attach_rate":"0.18317358892438765"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"GA","attach_rate":"0.17971014492753623"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"IL","attach_rate":"0.10051107325383304"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"MI","attach_rate":"0.09815950920245399"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"NC","attach_rate":"0.20121951219512196"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"NJ","attach_rate":"0.08239700374531835"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"NY","attach_rate":"0.21315192743764172"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"OH","attach_rate":"0.24175824175824176"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"PA","attach_rate":"0.07616707616707617"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"TX","attach_rate":"0.19720347155255544"},{"weekly_attach_row__signup_week__week":"2026-04-06","weekly_attach_row__state":"VA","attach_rate":"0.1388888888888889"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"CA","attach_rate":"0.21775270892088466"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"FL","attach_rate":"0.18583599574014908"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"GA","attach_rate":"0.1855072463768116"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"IL","attach_rate":"0.10221465076660988"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"MI","attach_rate":"0.10429447852760736"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"NC","attach_rate":"0.2073170731707317"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"NJ","attach_rate":"0.08614232209737828"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"NY","attach_rate":"0.22108843537414966"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"OH","attach_rate":"0.2490842490842491"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"PA","attach_rate":"0.07616707616707617"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"TX","attach_rate":"0.19961427193828352"},{"weekly_attach_row__signup_week__week":"2026-04-13","weekly_attach_row__state":"VA","attach_rate":"0.14351851851851852"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"CA","attach_rate":"0.22294789965860176"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"FL","attach_rate":"0.18636847710330137"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"GA","attach_rate":"0.18840579710144928"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"IL","attach_rate":"0.10221465076660988"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"MI","attach_rate":"0.11042944785276074"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"NC","attach_rate":"0.21341463414634146"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"NJ","attach_rate":"0.08614232209737828"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"NY","attach_rate":"0.2256235827664399"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"OH","attach_rate":"0.25274725274725274"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"PA","attach_rate":"0.0773955773955774"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"TX","attach_rate":"0.20250723240115717"},{"weekly_attach_row__signup_week__week":"2026-04-20","weekly_attach_row__state":"VA","attach_rate":"0.1574074074074074"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"CA","attach_rate":"0.2256197120379991"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"FL","attach_rate":"0.18796592119275826"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"GA","attach_rate":"0.19130434782608696"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"IL","attach_rate":"0.10732538330494037"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"MI","attach_rate":"0.11042944785276074"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"NC","attach_rate":"0.21646341463414634"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"NJ","attach_rate":"0.0898876404494382"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"NY","attach_rate":"0.23242630385487528"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"OH","attach_rate":"0.25457875457875456"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"PA","attach_rate":"0.08108108108108109"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"TX","attach_rate":"0.20395371263259401"},{"weekly_attach_row__signup_week__week":"2026-04-27","weekly_attach_row__state":"VA","attach_rate":"0.1574074074074074"}],"base_never_rebilled":[{"pct_base_never_rebilled":"0.113","renewal_unexposed_accounts":"339","assessable_base_accounts":"3000"}],"breakeven_by_channel":[{"account__channel":"sales_assisted","avg_breakeven_cycles":"2.441601779755284","contribution_margin_per_cycle":"14.281991101223399","share_breakeven_cycle_exposed":"0.7897664071190211"},{"account__channel":"self_serve","avg_breakeven_cycles":"1.1318419800095192","contribution_margin_per_cycle":"14.264869109948268","share_breakeven_cycle_exposed":"0.928605425987625"}],"cac_by_channel":[{"channel_week_row__signup_week__week":"2026-01-05","channel_week_row__channel":"sales_assisted","cac_by_channel":"393.57","cost_per_activated_account":"393.57"},{"channel_week_row__signup_week__week":"2026-01-05","channel_week_row__channel":"self_serve","cac_by_channel":"25.111052631578946","cost_per_activated_account":"34.07928571428572"},{"channel_week_row__signup_week__week":"2026-01-12","channel_week_row__channel":"sales_assisted","cac_by_channel":"213.20000000000002","cost_per_activated_account":"319.8"},{"channel_week_row__signup_week__week":"2026-01-12","channel_week_row__channel":"self_serve","cac_by_channel":"12.7215","cost_per_activated_account":"18.846666666666668"},{"channel_week_row__signup_week__week":"2026-01-19","channel_week_row__channel":"sales_assisted","cac_by_channel":"35.529411764705884","cost_per_activated_account":"50.333333333333336"},{"channel_week_row__signup_week__week":"2026-01-19","channel_week_row__channel":"self_serve","cac_by_channel":"11.505098039215687","cost_per_activated_account":"15.441052631578946"},{"channel_week_row__signup_week__week":"2026-01-26","channel_week_row__channel":"sales_assisted","cac_by_channel":"51.32043478260869","cost_per_activated_account":"73.773125"},{"channel_week_row__signup_week__week":"2026-01-26","channel_week_row__channel":"self_serve","cac_by_channel":"8.94864864864865","cost_per_activated_account":"12.734615384615385"},{"channel_week_row__signup_week__week":"2026-02-02","channel_week_row__channel":"sales_assisted","cac_by_channel":"18.9872131147541","cost_per_activated_account":"24.642978723404255"},{"channel_week_row__signup_week__week":"2026-02-02","channel_week_row__channel":"self_serve","cac_by_channel":"5.019846153846154","cost_per_activated_account":"7.677411764705883"},{"channel_week_row__signup_week__week":"2026-02-09","channel_week_row__channel":"sales_assisted","cac_by_channel":"16.909315068493154","cost_per_activated_account":"23.290188679245286"},{"channel_week_row__signup_week__week":"2026-02-09","channel_week_row__channel":"self_serve","cac_by_channel":"4.3219393939393935","cost_per_activated_account":"6.095042735042735"},{"channel_week_row__signup_week__week":"2026-02-16","channel_week_row__channel":"sales_assisted","cac_by_channel":"18.652727272727272","cost_per_activated_account":"24.343389830508475"},{"channel_week_row__signup_week__week":"2026-02-16","channel_week_row__channel":"self_serve","cac_by_channel":"3.794950495049505","cost_per_activated_account":"5.4755714285714285"},{"channel_week_row__signup_week__week":"2026-02-23","channel_week_row__channel":"sales_assisted","cac_by_channel":"11.907477477477478","cost_per_activated_account":"17.391184210526315"},{"channel_week_row__signup_week__week":"2026-02-23","channel_week_row__channel":"self_serve","cac_by_channel":"3.7361926605504587","cost_per_activated_account":"5.027716049382716"},{"channel_week_row__signup_week__week":"2026-03-02","channel_week_row__channel":"sales_assisted","cac_by_channel":"9.133007518796992","cost_per_activated_account":"12.653020833333334"},{"channel_week_row__signup_week__week":"2026-03-02","channel_week_row__channel":"self_serve","cac_by_channel":"3.1909876543209874","cost_per_activated_account":"4.64317365269461"},{"channel_week_row__signup_week__week":"2026-03-09","channel_week_row__channel":"sales_assisted","cac_by_channel":"13.662376237623763","cost_per_activated_account":"17.691025641025643"},{"channel_week_row__signup_week__week":"2026-03-09","channel_week_row__channel":"self_serve","cac_by_channel":"3.57668016194332","cost_per_activated_account":"5.1065895953757225"},{"channel_week_row__signup_week__week":"2026-03-16","channel_week_row__channel":"sales_assisted","cac_by_channel":"19.014583333333334","cost_per_activated_account":"27.939795918367345"},{"channel_week_row__signup_week__week":"2026-03-16","channel_week_row__channel":"self_serve","cac_by_channel":"4.407401960784314","cost_per_activated_account":"5.954370860927153"},{"channel_week_row__signup_week__week":"2026-03-23","channel_week_row__channel":"sales_assisted","cac_by_channel":"20.323823529411765","cost_per_activated_account":"27.09843137254902"},{"channel_week_row__signup_week__week":"2026-03-23","channel_week_row__channel":"self_serve","cac_by_channel":"5.3525294117647055","cost_per_activated_account":"7.108828125"},{"channel_week_row__signup_week__week":"2026-03-30","channel_week_row__channel":"sales_assisted","cac_by_channel":"26.202830188679247","cost_per_activated_account":"37.73207547169811"},{"channel_week_row__signup_week__week":"2026-03-30","channel_week_row__channel":"self_serve","cac_by_channel":"7.449763779527559","cost_per_activated_account":"13.069761016715017"},{"channel_week_row__signup_week__week":"2026-04-06","channel_week_row__channel":"sales_assisted","cac_by_channel":"37.6318918918919","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-06","channel_week_row__channel":"self_serve","cac_by_channel":"11.728372093023255","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-13","channel_week_row__channel":"sales_assisted","cac_by_channel":"76.33315789473684","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-13","channel_week_row__channel":"self_serve","cac_by_channel":"18.041428571428572","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-20","channel_week_row__channel":"sales_assisted","cac_by_channel":"79.69529411764705","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-20","channel_week_row__channel":"self_serve","cac_by_channel":"25.67625","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-27","channel_week_row__channel":"sales_assisted","cac_by_channel":"129.84545454545454","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-04-27","channel_week_row__channel":"self_serve","cac_by_channel":"39.420344827586206","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-05-04","channel_week_row__channel":"sales_assisted","cac_by_channel":"","cost_per_activated_account":""},{"channel_week_row__signup_week__week":"2026-05-04","channel_week_row__channel":"self_serve","cac_by_channel":"","cost_per_activated_account":""}],"censoring_register":[{"metric_name":"activation_rate_30d","denominator_accounts":"2661","excluded_accounts":"339","excluded_share":"0.113"},{"metric_name":"activation_rate_14d","denominator_accounts":"2903","excluded_accounts":"97","excluded_share":"0.03233333333333333"},{"metric_name":"activation_rate_7d","denominator_accounts":"2937","excluded_accounts":"63","excluded_share":"0.021"},{"metric_name":"kit_sla_rate","denominator_accounts":"2937","excluded_accounts":"63","excluded_share":"0.021"},{"metric_name":"digital_activation_rate_7d","denominator_accounts":"2960","excluded_accounts":"40","excluded_share":"0.013333333333333334"}],"churn_by_channel":[{"lifecycle_row__cycle_index":"3","account__channel":"sales_assisted","monthly_churn_rate":"0.09259259259259259"},{"lifecycle_row__cycle_index":"2","account__channel":"sales_assisted","monthly_churn_rate":"0.12759643916913946"},{"lifecycle_row__cycle_index":"0","account__channel":"sales_assisted","monthly_churn_rate":"0.012235817575083427"},{"lifecycle_row__cycle_index":"1","account__channel":"sales_assisted","monthly_churn_rate":"0.2312579415501906"},{"lifecycle_row__cycle_index":"1","account__channel":"self_serve","monthly_churn_rate":"0.2262813522355507"},{"lifecycle_row__cycle_index":"0","account__channel":"self_serve","monthly_churn_rate":"0.015230842455973346"},{"lifecycle_row__cycle_index":"2","account__channel":"self_serve","monthly_churn_rate":"0.09065934065934066"},{"lifecycle_row__cycle_index":"3","account__channel":"self_serve","monthly_churn_rate":"0.05732484076433121"}],"cycle_exposure":[{"account__cycle_exposure_cohort":"0","assessable_base_accounts":"339"},{"account__cycle_exposure_cohort":"1","assessable_base_accounts":"1256"},{"account__cycle_exposure_cohort":"2","assessable_base_accounts":"1099"},{"account__cycle_exposure_cohort":"3+","assessable_base_accounts":"306"}],"decision_contract":[{"metric_name":"at_risk_account_rate","decision_question":"staying","current_value":"0.3251808473992422","segment":"","threshold_value":"0.3","threshold_direction":"above","status":"triggered","action":"Trigger the CS recovery queue prioritised by revenue","owner":"Customer Success"},{"metric_name":"avg_breakeven_cycles","decision_question":"valuable","current_value":"2.441601779755284","segment":"sales_assisted","threshold_value":"2.0","threshold_direction":"at_or_above","status":"triggered","action":"Flag the channel as an unproven bet and freeze spend increases","owner":"Growth"},{"metric_name":"avg_days_to_kit_delivery","decision_question":"efficient","current_value":"11.070796460176991","segment":"OH","threshold_value":"10.0","threshold_direction":"above","status":"triggered","action":"Escalate to the logistics partner","owner":"Operations"},{"metric_name":"avg_delivery_delay_days","decision_question":"efficient","current_value":"11.571428571428571","segment":"PA","threshold_value":"5.0","threshold_direction":"above","status":"triggered","action":"Audit the carrier for that state","owner":"Operations"},{"metric_name":"cac_by_channel","decision_question":"efficient","current_value":"26.554794215795326","segment":"sales_assisted","threshold_value":"15.0","threshold_direction":"above","status":"triggered","action":"Review the channel bid and creative","owner":"Growth"},{"metric_name":"cac_uplift_pct","decision_question":"efficient","current_value":"0.27357214145342673","segment":"","threshold_value":"0.25","threshold_direction":"above","status":"triggered","action":"Review the kit shipping eligibility criteria","owner":"Growth + Ops"},{"metric_name":"contribution_margin_per_cycle","decision_question":"valuable","current_value":"9.489999999999823","segment":"small","threshold_value":"10.0","threshold_direction":"below","status":"triggered","action":"Review COGS and shipping per tier","owner":"Finance"},{"metric_name":"cost_per_activated_account","decision_question":"efficient","current_value":"28.22726582634366","segment":"sales_assisted","threshold_value":"25.0","threshold_direction":"above","status":"triggered","action":"Review the quality of the accounts the channel brings","owner":"Growth"},{"metric_name":"effective_cac","decision_question":"efficient","current_value":"29.88516129032258","segment":"sales_assisted","threshold_value":"20.0","threshold_direction":"above","status":"triggered","action":"Freeze spend increases on the channel until loaded CAC comes down","owner":"Growth"},{"metric_name":"incremental_mrr","decision_question":"growing","current_value":"0.0","segment":"2026-05-04","threshold_value":"5000.0","threshold_direction":"below","status":"triggered","action":"Review tier mix and pricing","owner":"Growth"},{"metric_name":"kit_late_rate","decision_question":"efficient","current_value":"0.41304347826086957","segment":"OH","threshold_value":"0.2","threshold_direction":"above","status":"triggered","action":"Audit the carrier for that state","owner":"Operations"},{"metric_name":"kit_lost_rate","decision_question":"efficient","current_value":"0.07246376811594203","segment":"OH","threshold_value":"0.05","threshold_direction":"above","status":"triggered","action":"Audit the carrier for that state","owner":"Operations"},{"metric_name":"pct_base_never_rebilled","decision_question":"staying","current_value":"0.113","segment":"","threshold_value":"0.1","threshold_direction":"above","status":"triggered","action":"Mark every retention reading as inconclusive in the report","owner":"Analytics"},{"metric_name":"share_breakeven_cycle_exposed","decision_question":"valuable","current_value":"0.7897664071190211","segment":"sales_assisted","threshold_value":"0.8","threshold_direction":"below","status":"triggered","action":"Report the unproven fraction alongside any payback claim","owner":"Analytics"},{"metric_name":"state_penetration","decision_question":"growing","current_value":"0.08108108108108109","segment":"PA","threshold_value":"0.1","threshold_direction":"below","status":"triggered","action":"Assess reallocating spend to states with a large remaining base","owner":"Growth"},{"metric_name":"system_inflicted_at_risk_accounts","decision_question":"staying","current_value":"448.0","segment":"","threshold_value":"300.0","threshold_direction":"above","status":"triggered","action":"Trigger the CS recovery queue prioritised by revenue","owner":"Customer Success"},{"metric_name":"zero_digital_access_accounts","decision_question":"staying","current_value":"592.0","segment":"","threshold_value":"400.0","threshold_direction":"above","status":"triggered","action":"Re-engagement campaign for accounts with no first login","owner":"Customer Success"},{"metric_name":"activation_rate_30d_vs_benchmark","decision_question":"valuable","current_value":"1.0157298545122673","segment":"","threshold_value":"1.0","threshold_direction":"below","status":"ok","action":"Open an onboarding investigation and segment by driver","owner":"Product"},{"metric_name":"arpa","decision_question":"valuable","current_value":"27.956666666666585","segment":"","threshold_value":"25.0","threshold_direction":"below","status":"ok","action":"Review tier mix","owner":"Growth"},{"metric_name":"attach_rate_vs_target","decision_question":"growing","current_value":"1.3333333333333335","segment":"2026-04-27","threshold_value":"1.0","threshold_direction":"below","status":"ok","action":"Review channel mix in the weekly launch review","owner":"Growth"},{"metric_name":"cac_payback_months","decision_question":"efficient","current_value":"1.859320176548793","segment":"sales_assisted","threshold_value":"3.0","threshold_direction":"above","status":"ok","action":"Freeze spend increases on the channel","owner":"Growth"},{"metric_name":"digital_activation_rate_7d","decision_question":"valuable","current_value":"0.6587837837837838","segment":"","threshold_value":"0.6","threshold_direction":"below","status":"ok","action":"Review the first-login flow","owner":"Product"},{"metric_name":"kit_on_time_delivery_rate","decision_question":"efficient","current_value":"0.8454204971058904","segment":"","threshold_value":"0.8","threshold_direction":"below","status":"ok","action":"Escalate to the regional logistics partner","owner":"Operations"},{"metric_name":"kit_sla_rate","decision_question":"valuable","current_value":"0.8454204971058904","segment":"","threshold_value":"0.8","threshold_direction":"below","status":"ok","action":"Escalate to the regional logistics partner","owner":"Operations"},{"metric_name":"never_logged_in_share","decision_question":"valuable","current_value":"0.15933859451334084","segment":"","threshold_value":"0.2","threshold_direction":"above","status":"ok","action":"Open an onboarding investigation; the mean time-to-login cannot see this","owner":"Product"},{"metric_name":"task_completion_rate","decision_question":"valuable","current_value":"0.7056557685080797","segment":"","threshold_value":"0.4","threshold_direction":"below","status":"ok","action":"Review the first-cycle task volume","owner":"Product"},{"metric_name":"task_engagement_rate","decision_question":"valuable","current_value":"0.8384066140548666","segment":"","threshold_value":"0.5","threshold_direction":"below","status":"ok","action":"Review first-cycle task onboarding","owner":"Product"},{"metric_name":"win_rate","decision_question":"efficient","current_value":"0.301981860933826","segment":"","threshold_value":"0.3","threshold_direction":"below","status":"ok","action":"Review the sales-assisted playbook","owner":"Sales"},{"metric_name":"zero_task_accounts","decision_question":"staying","current_value":"430.0","segment":"","threshold_value":"600.0","threshold_direction":"above","status":"ok","action":"Re-engagement campaign for accounts with no completed task","owner":"Customer Success"}],"effective_cac":[{"effective_cac_row__channel":"sales_assisted","effective_cac":"29.885161290322582","cac_uplift_pct":"0.12541490803744518","fulfillment_waste_usd":"2994.0"},{"effective_cac_row__channel":"self_serve","effective_cac":"10.778267491670633","cac_uplift_pct":"0.5093097408362237","fulfillment_waste_usd":"7641.5"}],"kit_sla_by_state":[{"account__state":"CA","kit_on_time_delivery_rate":"0.8670248488918737","kit_lost_rate":"0.026192075218267292"},{"account__state":"FL","kit_on_time_delivery_rate":"0.8681948424068768","kit_lost_rate":"0.014326647564469915"},{"account__state":"GA","kit_on_time_delivery_rate":"0.875","kit_lost_rate":"0.03125"},{"account__state":"IL","kit_on_time_delivery_rate":"0.8833333333333333","kit_lost_rate":"0.0"},{"account__state":"MI","kit_on_time_delivery_rate":"0.8285714285714286","kit_lost_rate":"0.0"},{"account__state":"NC","kit_on_time_delivery_rate":"0.8382352941176471","kit_lost_rate":"0.029411764705882353"},{"account__state":"NJ","kit_on_time_delivery_rate":"0.8260869565217391","kit_lost_rate":"0.0"},{"account__state":"NY","kit_on_time_delivery_rate":"0.864321608040201","kit_lost_rate":"0.035175879396984924"},{"account__state":"OH","kit_on_time_delivery_rate":"0.5144927536231884","kit_lost_rate":"0.07246376811594203"},{"account__state":"PA","kit_on_time_delivery_rate":"0.8870967741935484","kit_lost_rate":"0.0"},{"account__state":"TX","kit_on_time_delivery_rate":"0.8321342925659473","kit_lost_rate":"0.03836930455635491"},{"account__state":"VA","kit_on_time_delivery_rate":"0.9090909090909091","kit_lost_rate":"0.0"}],"lifecycle_by_cycle":[{"lifecycle_row__cycle_index":"0","rebill_rate":"","retention_rate":"0.9856666666666667","monthly_churn_rate":"0.014333333333333333"},{"lifecycle_row__cycle_index":"1","rebill_rate":"0.677564825253664","retention_rate":"0.7606163096580233","monthly_churn_rate":"0.2277756581457459"},{"lifecycle_row__cycle_index":"2","rebill_rate":"","retention_rate":"0.6804270462633452","monthly_churn_rate":"0.10234741784037558"},{"lifecycle_row__cycle_index":"3","rebill_rate":"","retention_rate":"0.6437908496732027","monthly_churn_rate":"0.06635071090047394"}],"login_timing":[{"login_timing_band":"0-2","band_order":"1","accounts":"918","share":"0.34498308906426156"},{"login_timing_band":"3-7","band_order":"2","accounts":"829","share":"0.3115370161593386"},{"login_timing_band":"8-14","band_order":"3","accounts":"370","share":"0.13904547162720782"},{"login_timing_band":"15-30","band_order":"4","accounts":"120","share":"0.04509582863585118"},{"login_timing_band":"never","band_order":"5","accounts":"424","share":"0.15933859451334084"}],"mrr_movement":[{"mrr_movement_cycle__movement_cycle_index":"0","gross_revenue_retention":"","net_revenue_retention":"","expansion_mrr_usd":"0.0","churned_mrr_usd":"0.0","contraction_mrr_usd":"0.0"},{"mrr_movement_cycle__movement_cycle_index":"1","gross_revenue_retention":"0.7700578015935127","net_revenue_retention":"0.7746909773943265","expansion_mrr_usd":"340.0","churned_mrr_usd":"16734.030000000002","contraction_mrr_usd":"140.0"},{"mrr_movement_cycle__movement_cycle_index":"2","gross_revenue_retention":"0.8919702505176086","net_revenue_retention":"0.8982493014555831","expansion_mrr_usd":"190.00000000000003","churned_mrr_usd":"3198.9100000000003","contraction_mrr_usd":"70.00000000000001"},{"mrr_movement_cycle__movement_cycle_index":"3","gross_revenue_retention":"0.9307422071042213","net_revenue_retention":"0.9341217900298925","expansion_mrr_usd":"20.000000000000004","churned_mrr_usd":"399.86","contraction_mrr_usd":"10.0"}],"rebill_by_state":[{"account__state":"MI","rebill_rate":"0.5625"},{"account__state":"OH","rebill_rate":"0.6016260162601627"},{"account__state":"IL","rebill_rate":"0.6111111111111112"},{"account__state":"NJ","rebill_rate":"0.6363636363636364"},{"account__state":"GA","rebill_rate":"0.6440677966101694"},{"account__state":"NC","rebill_rate":"0.6612903225806451"},{"account__state":"FL","rebill_rate":"0.6646341463414634"},{"account__state":"CA","rebill_rate":"0.6787057938299473"},{"account__state":"TX","rebill_rate":"0.6927083333333334"},{"account__state":"PA","rebill_rate":"0.7288135593220338"},{"account__state":"VA","rebill_rate":"0.7333333333333333"},{"account__state":"NY","rebill_rate":"0.7486033519553073"}],"skip_and_pause":[{"lifecycle_row__cycle_index":"0","skip_rate":"","pause_rate":"","skipped_cycles":"0","paused_cycles":"0"},{"lifecycle_row__cycle_index":"1","skip_rate":"0.058624577226606536","pause_rate":"0.024426907177752723","skipped_cycles":"156","paused_cycles":"65"},{"lifecycle_row__cycle_index":"2","skip_rate":"0.04768683274021352","pause_rate":"0.0298932384341637","skipped_cycles":"67","paused_cycles":"42"},{"lifecycle_row__cycle_index":"3","skip_rate":"0.06209150326797386","pause_rate":"0.05555555555555555","skipped_cycles":"19","paused_cycles":"17"}],"state_saturation":[{"saturation_state__state":"PA","state_penetration":"0.08108108108108109","remaining_eligible_accounts":"748"},{"saturation_state__state":"NJ","state_penetration":"0.0898876404494382","remaining_eligible_accounts":"243"},{"saturation_state__state":"IL","state_penetration":"0.10732538330494037","remaining_eligible_accounts":"524"},{"saturation_state__state":"MI","state_penetration":"0.11042944785276074","remaining_eligible_accounts":"290"},{"saturation_state__state":"VA","state_penetration":"0.1574074074074074","remaining_eligible_accounts":"182"},{"saturation_state__state":"FL","state_penetration":"0.18796592119275826","remaining_eligible_accounts":"1525"},{"saturation_state__state":"GA","state_penetration":"0.19130434782608696","remaining_eligible_accounts":"279"},{"saturation_state__state":"TX","state_penetration":"0.20395371263259401","remaining_eligible_accounts":"1651"},{"saturation_state__state":"NC","state_penetration":"0.21646341463414634","remaining_eligible_accounts":"257"},{"saturation_state__state":"CA","state_penetration":"0.2256197120379991","remaining_eligible_accounts":"5217"},{"saturation_state__state":"NY","state_penetration":"0.23242630385487528","remaining_eligible_accounts":"677"},{"saturation_state__state":"OH","state_penetration":"0.25457875457875456","remaining_eligible_accounts":"407"}],"time_to_milestone":[{"metric_time__week":"2026-01-05","avg_days_to_first_login":"6.684210526315789","avg_days_to_kit_delivery":"6.285714285714286","conversion_lag_days":"852.5909090909091"},{"metric_time__week":"2026-01-12","avg_days_to_first_login":"5.416666666666667","avg_days_to_kit_delivery":"6.266666666666667","conversion_lag_days":"839.9782608695652"},{"metric_time__week":"2026-01-19","avg_days_to_first_login":"4.256756756756757","avg_days_to_kit_delivery":"6.541176470588235","conversion_lag_days":"796.3294117647059"},{"metric_time__week":"2026-01-26","avg_days_to_first_login":"4.592592592592593","avg_days_to_kit_delivery":"6.191489361702128","conversion_lag_days":"769.5360824742268"},{"metric_time__week":"2026-02-02","avg_days_to_first_login":"4.727848101265823","avg_days_to_kit_delivery":"6.232432432432432","conversion_lag_days":"753.6335078534031"},{"metric_time__week":"2026-02-09","avg_days_to_first_login":"5.357843137254902","avg_days_to_kit_delivery":"6.688311688311688","conversion_lag_days":"738.5042016806723"},{"metric_time__week":"2026-02-16","avg_days_to_first_login":"5.050632911392405","avg_days_to_kit_delivery":"6.544444444444444","conversion_lag_days":"702.652329749104"},{"metric_time__week":"2026-02-23","avg_days_to_first_login":"5.1535714285714285","avg_days_to_kit_delivery":"6.329153605015674","conversion_lag_days":"678.4437689969604"},{"metric_time__week":"2026-03-02","avg_days_to_first_login":"4.760517799352751","avg_days_to_kit_delivery":"5.859116022099448","conversion_lag_days":"653.9441489361702"},{"metric_time__week":"2026-03-09","avg_days_to_first_login":"5.030201342281879","avg_days_to_kit_delivery":"5.922388059701492","conversion_lag_days":"632.2902298850574"},{"metric_time__week":"2026-03-16","avg_days_to_first_login":"4.973799126637554","avg_days_to_kit_delivery":"5.947565543071161","conversion_lag_days":"607.6920289855072"},{"metric_time__week":"2026-03-23","avg_days_to_first_login":"4.630541871921182","avg_days_to_kit_delivery":"5.9094827586206895","conversion_lag_days":"589.1302521008404"},{"metric_time__week":"2026-03-30","avg_days_to_first_login":"4.220183486238532","avg_days_to_kit_delivery":"7.338461538461538","conversion_lag_days":"560.3944444444444"},{"metric_time__week":"2026-04-06","avg_days_to_first_login":"","avg_days_to_kit_delivery":"","conversion_lag_days":"539.7317073170732"},{"metric_time__week":"2026-04-13","avg_days_to_first_login":"","avg_days_to_kit_delivery":"","conversion_lag_days":"498.61333333333334"},{"metric_time__week":"2026-04-20","avg_days_to_first_login":"","avg_days_to_kit_delivery":"","conversion_lag_days":"476.2105263157895"},{"metric_time__week":"2026-04-27","avg_days_to_first_login":"","avg_days_to_kit_delivery":"","conversion_lag_days":"453.3"}],"unit_economics":[{"channel_week_row__signup_week__week":"2026-01-05","channel_week_row__channel":"sales_assisted","incremental_mrr":"59.97","arpa":"19.99","cac_payback_months":"41.47207586933615"},{"channel_week_row__signup_week__week":"2026-01-05","channel_week_row__channel":"self_serve","incremental_mrr":"609.8100000000001","arpa":"32.09526315789474","cac_payback_months":"1.498884735006754"},{"channel_week_row__signup_week__week":"2026-01-12","channel_week_row__channel":"sales_assisted","incremental_mrr":"159.94","arpa":"26.656666666666666","cac_payback_months":"15.804299481097113"},{"channel_week_row__signup_week__week":"2026-01-12","channel_week_row__channel":"self_serve","incremental_mrr":"1159.6000000000001","arpa":"28.990000000000002","cac_payback_months":"0.8543653458697109"},{"channel_week_row__signup_week__week":"2026-01-19","channel_week_row__channel":"sales_assisted","incremental_mrr":"949.6600000000002","arpa":"27.93117647058824","cac_payback_months":"2.492468947303263"},{"channel_week_row__signup_week__week":"2026-01-19","channel_week_row__channel":"self_serve","incremental_mrr":"1349.4900000000002","arpa":"26.46058823529412","cac_payback_months":"0.8603645214739214"},{"channel_week_row__signup_week__week":"2026-01-26","channel_week_row__channel":"sales_assisted","incremental_mrr":"669.7700000000001","arpa":"29.1204347826087","cac_payback_months":"3.428617073808347"},{"channel_week_row__signup_week__week":"2026-01-26","channel_week_row__channel":"self_serve","incremental_mrr":"2069.26","arpa":"27.962972972972977","cac_payback_months":"0.626928975820347"},{"channel_week_row__signup_week__week":"2026-02-02","channel_week_row__channel":"sales_assisted","incremental_mrr":"1809.3900000000003","arpa":"29.66213114754099","cac_payback_months":"1.2415397313724013"},{"channel_week_row__signup_week__week":"2026-02-02","channel_week_row__channel":"self_serve","incremental_mrr":"3548.6999999999884","arpa":"27.29769230769222","cac_payback_months":"0.36180074291733644"},{"channel_week_row__signup_week__week":"2026-02-09","channel_week_row__channel":"sales_assisted","incremental_mrr":"2019.2700000000004","arpa":"27.661232876712333","cac_payback_months":"1.1998600270225606"},{"channel_week_row__signup_week__week":"2026-02-09","channel_week_row__channel":"self_serve","incremental_mrr":"4718.349999999979","arpa":"28.596060606060483","cac_payback_months":"0.29493971917199224"},{"channel_week_row__signup_week__week":"2026-02-16","channel_week_row__channel":"sales_assisted","incremental_mrr":"2159.2299999999996","arpa":"28.041948051948047","cac_payback_months":"1.302458444043419"},{"channel_week_row__signup_week__week":"2026-02-16","channel_week_row__channel":"self_serve","incremental_mrr":"5877.979999999972","arpa":"29.098910891088973","cac_payback_months":"0.25375209369145224"},{"channel_week_row__signup_week__week":"2026-02-23","channel_week_row__channel":"sales_assisted","incremental_mrr":"3048.8899999999926","arpa":"27.46747747747741","cac_payback_months":"0.8519650120214771"},{"channel_week_row__signup_week__week":"2026-02-23","channel_week_row__channel":"self_serve","incremental_mrr":"6167.819999999969","arpa":"28.292752293577838","cac_payback_months":"0.25817320798017135"},{"channel_week_row__signup_week__week":"2026-03-02","channel_week_row__channel":"sales_assisted","incremental_mrr":"3618.669999999988","arpa":"27.208045112781864","cac_payback_months":"0.6608148321428374"},{"channel_week_row__signup_week__week":"2026-03-02","channel_week_row__channel":"self_serve","incremental_mrr":"6727.569999999963","arpa":"27.685473251028657","cac_payback_months":"0.22619433092089858"},{"channel_week_row__signup_week__week":"2026-03-09","channel_week_row__channel":"sales_assisted","incremental_mrr":"2958.989999999993","arpa":"29.296930693069235","cac_payback_months":"0.9063442124414607"},{"channel_week_row__signup_week__week":"2026-03-09","channel_week_row__channel":"self_serve","incremental_mrr":"6757.529999999963","arpa":"27.35842105263143","cac_payback_months":"0.2571106771477564"},{"channel_week_row__signup_week__week":"2026-03-16","channel_week_row__channel":"sales_assisted","incremental_mrr":"1979.2800000000004","arpa":"27.490000000000006","cac_payback_months":"1.3591553490588508"},{"channel_week_row__signup_week__week":"2026-03-16","channel_week_row__channel":"self_serve","incremental_mrr":"5777.959999999972","arpa":"28.323333333333196","cac_payback_months":"0.30416852731430866"},{"channel_week_row__signup_week__week":"2026-03-23","channel_week_row__channel":"sales_assisted","incremental_mrr":"1939.3200000000004","arpa":"28.51941176470589","cac_payback_months":"1.391313977368823"},{"channel_week_row__signup_week__week":"2026-03-23","channel_week_row__channel":"self_serve","incremental_mrr":"4588.29999999998","arpa":"26.989999999999885","cac_payback_months":"0.3909809650668161"},{"channel_week_row__signup_week__week":"2026-03-30","channel_week_row__channel":"sales_assisted","incremental_mrr":"1499.4700000000003","arpa":"28.291886792452836","cac_payback_months":"1.8106966374173687"},{"channel_week_row__signup_week__week":"2026-03-30","channel_week_row__channel":"self_serve","incremental_mrr":"3468.7299999999896","arpa":"27.31283464566921","cac_payback_months":"0.5365834292746832"},{"channel_week_row__signup_week__week":"2026-04-06","channel_week_row__channel":"sales_assisted","incremental_mrr":"1009.6300000000002","arpa":"27.287297297297304","cac_payback_months":"2.713503400697678"},{"channel_week_row__signup_week__week":"2026-04-06","channel_week_row__channel":"self_serve","incremental_mrr":"2339.139999999998","arpa":"27.19930232558137","cac_payback_months":"0.8489235275304253"},{"channel_week_row__signup_week__week":"2026-04-13","channel_week_row__channel":"sales_assisted","incremental_mrr":"489.8100000000001","arpa":"25.779473684210533","cac_payback_months":"5.8882302789168115"},{"channel_week_row__signup_week__week":"2026-04-13","channel_week_row__channel":"self_serve","incremental_mrr":"1639.4400000000003","arpa":"29.27571428571429","cac_payback_months":"1.197856397609788"},{"channel_week_row__signup_week__week":"2026-04-20","channel_week_row__channel":"sales_assisted","incremental_mrr":"469.8300000000001","arpa":"27.63705882352942","cac_payback_months":"5.660886641875233"},{"channel_week_row__signup_week__week":"2026-04-20","channel_week_row__channel":"self_serve","incremental_mrr":"1129.6000000000001","arpa":"28.240000000000002","cac_payback_months":"1.7781336565096943"},{"channel_week_row__signup_week__week":"2026-04-27","channel_week_row__channel":"sales_assisted","incremental_mrr":"309.89000000000004","arpa":"28.171818181818185","cac_payback_months":"9.017614748405833"},{"channel_week_row__signup_week__week":"2026-04-27","channel_week_row__channel":"self_serve","incremental_mrr":"789.7100000000002","arpa":"27.23137931034483","cac_payback_months":"2.8493556990104922"},{"channel_week_row__signup_week__week":"2026-05-04","channel_week_row__channel":"sales_assisted","incremental_mrr":"0.0","arpa":"","cac_payback_months":""},{"channel_week_row__signup_week__week":"2026-05-04","channel_week_row__channel":"self_serve","incremental_mrr":"0.0","arpa":"","cac_payback_months":""}],"weekly_new_subscriptions":[{"metric_time__week":"2026-01-05","weekly_new_subscriptions":"22"},{"metric_time__week":"2026-01-12","weekly_new_subscriptions":"46"},{"metric_time__week":"2026-01-19","weekly_new_subscriptions":"85"},{"metric_time__week":"2026-01-26","weekly_new_subscriptions":"97"},{"metric_time__week":"2026-02-02","weekly_new_subscriptions":"191"},{"metric_time__week":"2026-02-09","weekly_new_subscriptions":"238"},{"metric_time__week":"2026-02-16","weekly_new_subscriptions":"279"},{"metric_time__week":"2026-02-23","weekly_new_subscriptions":"329"},{"metric_time__week":"2026-03-02","weekly_new_subscriptions":"376"},{"metric_time__week":"2026-03-09","weekly_new_subscriptions":"348"},{"metric_time__week":"2026-03-16","weekly_new_subscriptions":"276"},{"metric_time__week":"2026-03-23","weekly_new_subscriptions":"238"},{"metric_time__week":"2026-03-30","weekly_new_subscriptions":"180"},{"metric_time__week":"2026-04-06","weekly_new_subscriptions":"123"},{"metric_time__week":"2026-04-13","weekly_new_subscriptions":"75"},{"metric_time__week":"2026-04-20","weekly_new_subscriptions":"57"},{"metric_time__week":"2026-04-27","weekly_new_subscriptions":"40"}],"win_rate":[{"pitch__state":"CA","win_rate":"0.24371993586317478"},{"pitch__state":"FL","win_rate":"0.3591549295774648"},{"pitch__state":"GA","win_rate":"0.4186046511627907"},{"pitch__state":"IL","win_rate":"0.2962962962962963"},{"pitch__state":"MI","win_rate":"0.5185185185185185"},{"pitch__state":"NC","win_rate":"0.2967032967032967"},{"pitch__state":"NJ","win_rate":"0.35294117647058826"},{"pitch__state":"NY","win_rate":"0.4878048780487805"},{"pitch__state":"OH","win_rate":"0.3787878787878788"},{"pitch__state":"PA","win_rate":"0.5"},{"pitch__state":"TX","win_rate":"0.44086021505376344"},{"pitch__state":"VA","win_rate":"0.4375"}]};
+</script>
+<script>
+const D = window.__DATA__;
+const N = (v) => (v === "" || v == null ? null : +v);
+const pct = (v, d = 1) => (v == null ? "—" : (v * 100).toFixed(d) + "%");
+const num = (v, d = 1) => (v == null ? "—" : v.toFixed(d));
+const usd = (v) => (v == null ? "—" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const int = (v) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
+const wk = (s) => s.slice(5).replace("-", "/");
+const cssv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SER = ["--s1", "--s2", "--s3", "--s4", "--s5"];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const tip = document.getElementById("tip");
+
+function showTip(html, ev) {
+  tip.innerHTML = html;
+  tip.dataset.on = "1";
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY - 10;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = innerHeight - r.height - 8;
+  tip.style.left = x + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+const hideTip = () => (tip.dataset.on = "0");
+
+function svg(w, h) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  s.setAttribute("role", "img");
+  return s;
+}
+function el(tag, attrs, parent) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+// rounded-top bar path, 4px radius, flat on the baseline
+function barPath(x, y, w, h, r) {
+  r = Math.min(r, w / 2, Math.max(h, 0));
+  if (h <= 0.5) return `M${x} ${y + h}h${w}`;
+  return `M${x} ${y + h}V${y + r}a${r} ${r} 0 0 1 ${r} ${-r}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}V${y + h}Z`;
+}
+function ticks(max, n = 4) {
+  const raw = max / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
+  const out = []; for (let v = 0; v <= max * 1.0001; v += step) out.push(v);
+  return out;
+}
+
+/* ---------- vertical bars ---------- */
+function barChart(host, rows, o) {
+  const W = 640, H = o.h || 210, P = { t: 14, r: 10, b: 30, l: 44 };
+  const s = svg(W, H); host.appendChild(s);
+  const vals = rows.map((r) => o.v(r));
+  const max = Math.max(...vals, o.min || 0) * 1.08 || 1;
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const bw = iw / rows.length, gap = Math.min(6, bw * 0.22);
+  const col = cssv(o.color || "--s1");
+  ticks(max).forEach((t) => {
+    const y = P.t + ih - (t / max) * ih;
+    el("line", { x1: P.l, x2: W - P.r, y1: y, y2: y, class: "gl" }, s);
+    el("text", { x: P.l - 7, y: y + 3, class: "ax", "text-anchor": "end" }, s).textContent = o.fmtAx ? o.fmtAx(t) : int(t);
+  });
+  rows.forEach((r, i) => {
+    const v = vals[i], x = P.l + i * bw + gap / 2, w = bw - gap;
+    const h = (v / max) * ih, y = P.t + ih - h;
+    el("path", { d: barPath(x, y, w, h, 4), fill: col }, s);
+    if (o.labelEvery && (i % o.labelEvery === 0 || i === rows.length - 1) && h > 14)
+      el("text", { x: x + w / 2, y: y - 4, class: "dl", "text-anchor": "middle" }, s).textContent = o.fmtV(v);
+    if (i % (o.tickEvery || 1) === 0 || i === rows.length - 1)
+      el("text", { x: x + w / 2, y: H - 10, class: "ax", "text-anchor": "middle" }, s).textContent = o.x(r);
+    const hit = el("rect", { x: P.l + i * bw, y: P.t, width: bw, height: ih, class: "hit" }, s);
+    hit.addEventListener("pointermove", (e) => showTip(`<div class="h">${esc(o.xFull ? o.xFull(r) : o.x(r))}</div><div class="r"><span><i style="background:${col}"></i>${esc(o.name)}</span><b>${o.fmtV(v)}</b></div>`, e));
+    hit.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* ---------- multi-series lines, crosshair ---------- */
+function lineChart(host, rows, o) {
+  const W = 640, H = o.h || 220, P = { t: 14, r: 12, b: 30, l: 46 };
+  const s = svg(W, H); host.appendChild(s);
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const all = rows.flatMap((r) => o.series.map((se) => o.v(r, se.key))).filter((v) => v != null);
+  const max = (o.max != null ? o.max : Math.max(...all)) * 1.08 || 1;
+  const min = o.min != null ? o.min : 0;
+  const X = (i) => P.l + (rows.length === 1 ? iw / 2 : (i / (rows.length - 1)) * iw);
+  const Y = (v) => P.t + ih - ((v - min) / (max - min)) * ih;
+  ticks(max).forEach((t) => {
+    if (t < min) return;
+    const y = Y(t);
+    el("line", { x1: P.l, x2: W - P.r, y1: y, y2: y, class: "gl" }, s);
+    el("text", { x: P.l - 7, y: y + 3, class: "ax", "text-anchor": "end" }, s).textContent = o.fmtAx ? o.fmtAx(t) : num(t, 0);
+  });
+  if (o.ref != null) {
+    const y = Y(o.ref);
+    el("line", { x1: P.l, x2: W - P.r, y1: y, y2: y, stroke: cssv("--ink-3"), "stroke-width": 1, "stroke-dasharray": "5 4" }, s);
+    el("text", { x: W - P.r, y: y - 5, class: "dl", "text-anchor": "end" }, s).textContent = o.refLabel || "";
+  }
+  const cross = el("line", { class: "cross", y1: P.t, y2: P.t + ih, x1: -99, x2: -99 }, s);
+  o.series.forEach((se) => {
+    const col = cssv(se.color);
+    const pts = rows.map((r, i) => [X(i), o.v(r, se.key)]).filter((p) => p[1] != null);
+    if (!pts.length) return;
+    el("path", { d: pts.map((p, i) => (i ? "L" : "M") + p[0] + " " + Y(p[1])).join(""), fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, s);
+    const last = pts[pts.length - 1];
+    el("circle", { cx: last[0], cy: Y(last[1]), r: 4.5, fill: col, stroke: cssv("--surface"), "stroke-width": 2 }, s);
+    el("text", { x: last[0] + 8, y: Y(last[1]) + 3.5, class: "dl", fill: col }, s).textContent = o.fmtV(last[1]);
+  });
+  rows.forEach((r, i) => {
+    if (i % (o.tickEvery || 1) === 0 || i === rows.length - 1)
+      el("text", { x: X(i), y: H - 10, class: "ax", "text-anchor": "middle" }, s).textContent = o.x(r);
+  });
+  const hit = el("rect", { x: P.l, y: P.t, width: iw, height: ih, class: "hit" }, s);
+  hit.addEventListener("pointermove", (e) => {
+    const bb = s.getBoundingClientRect();
+    const rel = ((e.clientX - bb.left) / bb.width) * W;
+    let i = Math.round(((rel - P.l) / iw) * (rows.length - 1));
+    i = Math.max(0, Math.min(rows.length - 1, i));
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i));
+    const r = rows[i];
+    showTip(`<div class="h">${esc(o.xFull ? o.xFull(r) : o.x(r))}</div>` +
+      o.series.map((se) => `<div class="r"><span><i style="background:${cssv(se.color)}"></i>${esc(se.label)}</span><b>${o.fmtV(o.v(r, se.key))}</b></div>`).join(""), e);
+  });
+  hit.addEventListener("pointerleave", () => { hideTip(); cross.setAttribute("x1", -99); cross.setAttribute("x2", -99); });
+}
+
+/* ---------- horizontal bars, ranked ---------- */
+function hbar(host, rows, o) {
+  const rowH = 21, W = 640, P = { t: 6, r: 56, b: 20, l: 38 };
+  const H = P.t + P.b + rows.length * rowH;
+  const s = svg(W, H); host.appendChild(s);
+  const iw = W - P.l - P.r;
+  const max = Math.max(...rows.map(o.v)) * 1.02 || 1;
+  if (o.ref != null) {
+    const x = P.l + (o.ref / max) * iw;
+    el("line", { x1: x, x2: x, y1: P.t, y2: H - P.b, stroke: cssv("--ink-3"), "stroke-width": 1, "stroke-dasharray": "5 4" }, s);
+    el("text", { x: x, y: H - 7, class: "ax", "text-anchor": "middle" }, s).textContent = o.refLabel || "";
+  }
+  rows.forEach((r, i) => {
+    const v = o.v(r), y = P.t + i * rowH, h = rowH - 6;
+    const w = (v / max) * iw;
+    const col = o.color ? cssv(o.color(r, i)) : cssv("--s1");
+    el("text", { x: P.l - 8, y: y + h / 2 + 3.5, class: "axl", "text-anchor": "end" }, s).textContent = o.k(r);
+    el("rect", { x: P.l, y: y, width: iw, height: h, rx: 3, fill: cssv("--grid") }, s);
+    const p = el("path", { d: `M${P.l} ${y}h${Math.max(w - 4, 0)}a4 4 0 0 1 4 4v${h - 8}a4 4 0 0 1 -4 4H${P.l}Z`, fill: col }, s);
+    if (w < 8) { p.remove(); el("rect", { x: P.l, y: y, width: Math.max(w, 1.5), height: h, fill: col }, s); }
+    el("text", { x: P.l + iw + 8, y: y + h / 2 + 3.5, class: "dl" }, s).textContent = o.fmtV(v);
+    const hit = el("rect", { x: 0, y: y - 3, width: W, height: rowH, class: "hit" }, s);
+    hit.addEventListener("pointermove", (e) => showTip(`<div class="h">${esc(o.kFull ? o.kFull(r) : o.k(r))}</div>` + o.rows(r).map((t) => `<div class="r"><span>${esc(t[0])}</span><b>${t[1]}</b></div>`).join(""), e));
+    hit.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* ---------- grouped bars ---------- */
+function groupedBar(host, groups, o) {
+  const W = 640, H = o.h || 210, P = { t: 14, r: 10, b: 34, l: 50 };
+  const s = svg(W, H); host.appendChild(s);
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const max = Math.max(...groups.flatMap((g) => o.series.map((se) => g[se.key] ?? 0))) * 1.12 || 1;
+  ticks(max).forEach((t) => {
+    const y = P.t + ih - (t / max) * ih;
+    el("line", { x1: P.l, x2: W - P.r, y1: y, y2: y, class: "gl" }, s);
+    el("text", { x: P.l - 7, y: y + 3, class: "ax", "text-anchor": "end" }, s).textContent = o.fmtAx(t);
+  });
+  const gw = iw / groups.length, inner = Math.min(gw * 0.68, 190);
+  const bw = (inner - 2 * (o.series.length - 1)) / o.series.length;
+  groups.forEach((g, gi) => {
+    const gx = P.l + gi * gw + (gw - inner) / 2;
+    o.series.forEach((se, si) => {
+      const v = g[se.key] ?? 0, h = (v / max) * ih, y = P.t + ih - h;
+      const x = gx + si * (bw + 2), col = cssv(se.color);
+      el("path", { d: barPath(x, y, bw, h, 4), fill: col }, s);
+      el("text", { x: x + bw / 2, y: y - 5, class: "dl", "text-anchor": "middle" }, s).textContent = o.fmtV(v);
+      const hit = el("rect", { x: x, y: P.t, width: bw, height: ih, class: "hit" }, s);
+      hit.addEventListener("pointermove", (e) => showTip(`<div class="h">${esc(g.label)}</div><div class="r"><span><i style="background:${col}"></i>${esc(se.label)}</span><b>${o.fmtV(v)}</b></div>`, e));
+      hit.addEventListener("pointerleave", hideTip);
+    });
+    el("text", { x: gx + inner / 2, y: H - 12, class: "axl", "text-anchor": "middle" }, s).textContent = g.label;
+  });
+}
+
+/* ---------- builders ---------- */
+function sheet(span, title, src, bodyFn, note, legend) {
+  const d = document.createElement("div");
+  d.className = "sheet " + span;
+  d.innerHTML = `<div class="sh-head"><h3 class="sh-title">${esc(title)}</h3><span class="sh-src">${esc(src)}</span></div>` +
+    (note ? `<p class="sh-note">${note}</p>` : "") +
+    (legend ? `<div class="legend">${legend.map((l) => `<span class="lg ${l.line ? "line" : ""}"><i style="background:${cssv(l.color)}"></i>${esc(l.label)}</span>`).join("")}</div>` : "");
+  const b = document.createElement("div");
+  b.className = "sh-body";
+  d.appendChild(b);
+  bodyFn(b);
+  return d;
+}
+function tiles(span, title, src, items, note) {
+  const d = document.createElement("div");
+  d.className = "sheet " + span;
+  d.innerHTML = `<div class="sh-head"><h3 class="sh-title">${esc(title)}</h3><span class="sh-src">${esc(src)}</span></div>` +
+    (note ? `<p class="sh-note">${note}</p>` : "") +
+    `<div class="tiles">${items.map((i) => `<div class="tile"><span class="k">${esc(i.k)}</span><span class="v">${i.v}</span><span class="d">${esc(i.d)}</span></div>`).join("")}</div>`;
+  return d;
+}
+function table(span, title, src, cols, rows, note) {
+  const d = document.createElement("div");
+  d.className = "sheet " + span;
+  d.innerHTML = `<div class="sh-head"><h3 class="sh-title">${esc(title)}</h3><span class="sh-src">${esc(src)}</span></div>` +
+    (note ? `<p class="sh-note">${note}</p>` : "") +
+    `<div class="tw"><table><thead><tr>${cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ""}>${esc(c.h)}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${cols[i].num ? "num" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  return d;
+}
+
+const STATE_NAME = { CA: "California", TX: "Texas", FL: "Florida", NY: "New York", PA: "Pennsylvania", IL: "Illinois", OH: "Ohio", GA: "Georgia", NC: "N. Carolina", MI: "Michigan", NJ: "New Jersey", VA: "Virginia" };
+const sortBy = (a, f) => [...a].sort((x, y) => f(y) - f(x));
+const last = (a) => a[a.length - 1];
+
+const TABS = [
+  /* ================= 1. LAUNCH PULSE ================= */
+  {
+    id: "pulse", name: "Launch Pulse",
+    lede: "Is it growing? Weekly acquisition against the addressable Premium base, and how much of that base each region has reached.",
+    build(c) {
+      const A = D.attach_rate, W = D.weekly_new_subscriptions, S = D.state_saturation;
+      const fin = last(A);
+      c.appendChild(tiles("h12", "Launch to date", "control_attach_rate.csv · control_state_saturation.csv", [
+        { k: "Cumulative attach", v: pct(N(fin.attach_rate)), d: int(N(fin.cumulative_subscriptions_to_date)) + " of 15,000 eligible" },
+        { k: "vs launch target", v: num(N(fin.attach_rate_vs_target), 2) + "×", d: "target 15% of base" },
+        { k: "Subscriptions", v: int(D.weekly_new_subscriptions.reduce((s, r) => s + N(r.weekly_new_subscriptions), 0)), d: "17 signup weeks" },
+        { k: "Peak week", v: int(Math.max(...W.map((r) => N(r.weekly_new_subscriptions)))), d: "new subscriptions" },
+      ]));
+      c.appendChild(sheet("h7", "Cumulative attach rate vs. launch target", "control_attach_rate.csv",
+        (b) => lineChart(b, A, {
+          x: (r) => wk(r.weekly_attach_row__signup_week__week), xFull: (r) => r.weekly_attach_row__signup_week__week,
+          v: (r, k) => N(r[k]), series: [{ key: "attach_rate", color: "--s1", label: "Attach rate" }],
+          fmtV: (v) => pct(v), fmtAx: (v) => pct(v, 0), tickEvery: 3, ref: 0.15, refLabel: "target 15%", h: 234,
+        }),
+        "Plotted against the target as a line, not a ratio: 1.33× reads as on-plan only if you know the plan.",
+        [{ color: "--s1", label: "Attach rate", line: 1 }]));
+      c.appendChild(sheet("h5", "New subscriptions per week", "control_weekly_new_subscriptions.csv",
+        (b) => barChart(b, W, {
+          x: (r) => wk(r.metric_time__week), xFull: (r) => r.metric_time__week,
+          v: (r) => N(r.weekly_new_subscriptions), name: "New subscriptions",
+          fmtV: (v) => int(v), tickEvery: 3, labelEvery: 8, h: 234,
+        }),
+        "The curve saturates rather than stalls — read it beside penetration, below."));
+      c.appendChild(sheet("h6", "Penetration of the eligible base, by state", "control_state_saturation.csv",
+        (b) => hbar(b, sortBy(S, (r) => N(r.state_penetration)), {
+          k: (r) => r.saturation_state__state, kFull: (r) => STATE_NAME[r.saturation_state__state] || r.saturation_state__state,
+          v: (r) => N(r.state_penetration), fmtV: (v) => pct(v),
+          color: (r) => (N(r.state_penetration) < 0.1 ? "--s2" : "--s1"), ref: 0.2, refLabel: "national 20%",
+          rows: (r) => [["Penetration", pct(N(r.state_penetration))], ["Remaining eligible", int(N(r.remaining_eligible_accounts))]],
+        }),
+        "Orange marks states below the 10% threshold the decision contract watches: PA and NJ.",
+        [{ color: "--s1", label: "At or above 10%" }, { color: "--s2", label: "Below 10% — spend reallocation candidate" }]));
+      c.appendChild(sheet("h6", "Attach rate by state, latest week", "control_attach_rate_by_state.csv",
+        (b) => {
+          const wkl = last(D.attach_rate).weekly_attach_row__signup_week__week;
+          const rows = D.attach_rate_by_state.filter((r) => r.weekly_attach_row__signup_week__week === wkl);
+          hbar(b, sortBy(rows, (r) => N(r.attach_rate)), {
+            k: (r) => r.weekly_attach_row__state, kFull: (r) => STATE_NAME[r.weekly_attach_row__state],
+            v: (r) => N(r.attach_rate), fmtV: (v) => pct(v),
+            rows: (r) => [["Attach rate", pct(N(r.attach_rate))], ["Week", wkl]],
+          });
+        },
+        "Same measure as the trend, cut by region at the end of the window."));
+    },
+  },
+
+  /* ================= 2. ACTIVATION ================= */
+  {
+    id: "activation", name: "Activation",
+    lede: "Do new accounts get set up? Every rate is computed on the mature cohort only — accounts that have had the full window — so recent signups are excluded rather than scored as failures.",
+    build(c) {
+      const R = D.activation_rates, L = D.login_timing, CR = D.censoring_register;
+      const mat = R.filter((r) => N(r.activation_rate_30d) != null);
+      const den = mat.reduce((s, r) => s + N(r.mature_cohort_size_30d), 0);
+      const nat = mat.reduce((s, r) => s + N(r.activation_rate_30d) * N(r.mature_cohort_size_30d), 0) / den;
+      const full = mat.slice(0, -1).map((r) => N(r.activation_rate_30d));
+      const lastC = mat[mat.length - 1];
+      c.appendChild(tiles("h12", "Activation across the mature cohort", "control_activation_rates.csv", [
+        { k: "30-day activation", v: pct(nat), d: "1.02× the 70% benchmark" },
+        { k: "Fully-mature range", v: pct(Math.min(...full), 0) + "–" + pct(Math.max(...full), 0), d: "week to week, excl. the newest cohort" },
+        { k: "Mature cohort", v: int(den), d: "of 3,000 accounts, 339 too new" },
+        { k: "Newest cohort", v: pct(N(lastC.activation_rate_30d)), d: lastC.metric_time__week + " · only 76% matured" },
+      ], "The headline is the <b>cohort-weighted</b> rate across every account that has finished its 30-day window — not the newest cohort. That cohort reads 60.3% because a quarter of it has not finished the window yet: reporting it as the current level would be reporting censoring as performance. Activation also requires an <em>on-time</em> kit, not merely a delivered one — a delivered-within-30-days rule would let Ohio score as fully activated."));
+      c.appendChild(sheet("h8", "Activation rates over time", "control_activation_rates.csv",
+        (b) => lineChart(b, R, {
+          x: (r) => wk(r.metric_time__week), xFull: (r) => r.metric_time__week, v: (r, k) => N(r[k]),
+          series: [
+            { key: "digital_activation_rate_7d", color: "--s1", label: "Digital 7-day" },
+            { key: "kit_sla_rate", color: "--s3", label: "Kit SLA" },
+            { key: "activation_rate_7d", color: "--s4", label: "Combined 7-day" },
+            { key: "activation_rate_14d", color: "--s5", label: "Combined 14-day" },
+            { key: "activation_rate_30d", color: "--s2", label: "Combined 30-day" },
+          ],
+          fmtV: (v) => pct(v), fmtAx: (v) => pct(v, 0), tickEvery: 3, max: 1, ref: 0.7, refLabel: "benchmark 70%", h: 260,
+        }),
+        "The four most recent weeks carry no 30-day rate: those cohorts have not finished their window.",
+        [{ color: "--s1", label: "Digital 7-day", line: 1 }, { color: "--s3", label: "Kit SLA", line: 1 }, { color: "--s4", label: "Combined 7-day", line: 1 }, { color: "--s5", label: "Combined 14-day", line: 1 }, { color: "--s2", label: "Combined 30-day", line: 1 }]));
+      c.appendChild(sheet("h4", "Time to first login", "control_login_timing.csv",
+        (b) => hbar(b, L, {
+          k: (r) => r.login_timing_band + (r.login_timing_band === "never" ? "" : "d"),
+          v: (r) => N(r.share), fmtV: (v) => pct(v),
+          color: (r) => (r.login_timing_band === "never" ? "--s2" : "--s1"),
+          rows: (r) => [["Accounts", int(N(r.accounts))], ["Share", pct(N(r.share))]],
+        }),
+        "The <em>never</em> band is why the mean time-to-login cannot be thresholded: it improves as onboarding gets worse.",
+        [{ color: "--s1", label: "Logged in" }, { color: "--s2", label: "Never logged in" }]));
+      c.appendChild(table("h12", "Censoring register — how much of the base each rate excludes", "control_censoring_register.csv",
+        [{ h: "Metric" }, { h: "Denominator", num: 1 }, { h: "Excluded", num: 1 }, { h: "Excluded share", num: 1 }],
+        CR.map((r) => [`<code>${esc(r.metric_name)}</code>`, int(N(r.denominator_accounts)), int(N(r.excluded_accounts)), pct(N(r.excluded_share), 2)]),
+        "Every published rate names the accounts it left out. This is the table that keeps a maturity gate from reading as a performance result."));
+    },
+  },
+
+  /* ================= 3. KIT OPERATIONS ================= */
+  {
+    id: "kits", name: "Kit Operations",
+    lede: "Physical fulfilment: on-time delivery, loss and lateness by state. This dashboard carries the launch's clearest operational finding.",
+    build(c) {
+      const K = D.kit_sla_by_state;
+      const oh = K.find((r) => r.account__state === "OH");
+      const others = K.filter((r) => r.account__state !== "OH");
+      const mean = others.reduce((s, r) => s + N(r.kit_on_time_delivery_rate), 0) / others.length;
+      c.appendChild(tiles("h12", "Fulfilment headline", "control_kit_sla_by_state.csv", [
+        { k: "Ohio on-time", v: pct(N(oh.kit_on_time_delivery_rate)), d: "worst state by 30+ points" },
+        { k: "Eleven-state mean", v: pct(mean), d: "every state except Ohio" },
+        { k: "Gap", v: (100 * (mean - N(oh.kit_on_time_delivery_rate))).toFixed(1) + "pts", d: "Ohio vs the rest" },
+        { k: "Ohio kit loss", v: pct(N(oh.kit_lost_rate), 2), d: "national 2.76%" },
+      ], "Ohio is not a tail — it is a single carrier relationship, and it is the one fix that moves activation nationally."));
+      c.appendChild(sheet("h7", "On-time delivery rate by state", "control_kit_sla_by_state.csv",
+        (b) => hbar(b, sortBy(K, (r) => N(r.kit_on_time_delivery_rate)), {
+          k: (r) => r.account__state, kFull: (r) => STATE_NAME[r.account__state],
+          v: (r) => N(r.kit_on_time_delivery_rate), fmtV: (v) => pct(v),
+          color: (r) => (r.account__state === "OH" ? "--s2" : "--s1"), ref: 0.8, refLabel: "SLA floor 80%",
+          rows: (r) => [["On-time", pct(N(r.kit_on_time_delivery_rate))], ["Kit loss", pct(N(r.kit_lost_rate), 2)]],
+        }),
+        "Ohio is the only state below the 80% contract threshold.",
+        [{ color: "--s1", label: "Meets the 80% floor" }, { color: "--s2", label: "Below floor — escalate" }]));
+      c.appendChild(sheet("h5", "Kit loss rate by state", "control_kit_sla_by_state.csv",
+        (b) => hbar(b, sortBy(K, (r) => N(r.kit_lost_rate)), {
+          k: (r) => r.account__state, kFull: (r) => STATE_NAME[r.account__state],
+          v: (r) => N(r.kit_lost_rate), fmtV: (v) => pct(v, 2),
+          color: (r) => (N(r.kit_lost_rate) > 0.05 ? "--s2" : "--s1"), ref: 0.05, refLabel: "5%",
+          rows: (r) => [["Kit loss", pct(N(r.kit_lost_rate), 2)]],
+        }),
+        "Ohio again, and only Ohio, above the 5% audit threshold."));
+      c.appendChild(sheet("h12", "Time to milestone", "control_time_to_milestone.csv",
+        (b) => lineChart(b, D.time_to_milestone, {
+          x: (r) => wk(r.metric_time__week), xFull: (r) => r.metric_time__week, v: (r, k) => N(r[k]),
+          series: [{ key: "avg_days_to_first_login", color: "--s1", label: "Days to first login" }, { key: "avg_days_to_kit_delivery", color: "--s3", label: "Days to kit delivery" }],
+          fmtV: (v) => num(v, 1) + "d", fmtAx: (v) => num(v, 0) + "d", tickEvery: 3, h: 200,
+        }),
+        "Both averages are bounded to the 30-day mature cohort, so no counted event postdates the observation cutoff.",
+        [{ color: "--s1", label: "Days to first login", line: 1 }, { color: "--s3", label: "Days to kit delivery", line: 1 }]));
+    },
+  },
+
+  /* ================= 4. ACQUISITION EFFICIENCY ================= */
+  {
+    id: "cac", name: "Acquisition Efficiency",
+    lede: "What each channel costs, once the fulfilment it wastes is loaded back in — and how many billing cycles that cost takes to repay.",
+    build(c) {
+      const E = D.effective_cac, B = D.breakeven_by_channel;
+      const lab = (ch) => (ch === "self_serve" ? "Self-serve" : "Sales-assisted");
+      const groups = E.map((r) => {
+        const ch = r.effective_cac_row__channel;
+        const nominalCac = ch === "self_serve" ? 7.1412 : 26.5548;
+        return { label: lab(ch), nominal: nominalCac, effective: N(r.effective_cac) };
+      });
+      c.appendChild(tiles("h12", "Loaded acquisition cost", "control_effective_cac.csv", E.flatMap((r) => [
+        { k: lab(r.effective_cac_row__channel) + " effective CAC", v: usd(N(r.effective_cac)), d: "+" + pct(N(r.cac_uplift_pct)) + " over nominal" },
+        { k: lab(r.effective_cac_row__channel) + " waste", v: usd(N(r.fulfillment_waste_usd)), d: "COGS + shipping with no return" },
+      ]), "Nominal CAC counts marketing spend only, so the channel that buys cheap accounts which never activate looks like the efficient one. Loading the waste back in reverses the ranking."));
+      c.appendChild(sheet("h6", "Nominal vs. effective CAC by channel", "control_effective_cac.csv",
+        (b) => groupedBar(b, groups, {
+          series: [{ key: "nominal", color: "--s1", label: "Nominal CAC" }, { key: "effective", color: "--s2", label: "Effective CAC" }],
+          fmtV: (v) => "$" + num(v, 2), fmtAx: (v) => "$" + num(v, 0), h: 214,
+        }),
+        "Self-serve carries a 50.9% uplift against sales-assisted's 12.5% — the cheap channel wastes the most per account.",
+        [{ color: "--s1", label: "Nominal CAC" }, { color: "--s2", label: "Effective CAC (loaded with waste)" }]));
+      c.appendChild(sheet("h6", "Cycles to break even, by channel", "control_breakeven_by_channel.csv",
+        (b) => groupedBar(b, B.map((r) => ({ label: lab(r.account__channel), be: N(r.avg_breakeven_cycles), sh: N(r.share_breakeven_cycle_exposed) * 4 })), {
+          series: [{ key: "be", color: "--s3", label: "Avg cycles to break even" }],
+          fmtV: (v) => num(v, 2), fmtAx: (v) => num(v, 1), h: 214,
+        }),
+        "The honest substitute for LTV:CAC in a 120-day window — observed cycles only, no survival assumption.",
+        [{ color: "--s3", label: "Average cycles to break even" }]));
+      c.appendChild(sheet("h12", "Cost per activated account, by channel and week", "control_cac_by_channel.csv",
+        (b) => {
+          const weeks = [...new Set(D.cac_by_channel.map((r) => r.channel_week_row__signup_week__week))].sort();
+          const rows = weeks.map((w) => {
+            const o = { w };
+            D.cac_by_channel.filter((r) => r.channel_week_row__signup_week__week === w).forEach((r) => { o[r.channel_week_row__channel] = N(r.cost_per_activated_account); });
+            return o;
+          }).filter((r) => r.self_serve != null || r.sales_assisted != null);
+          lineChart(b, rows, {
+            x: (r) => wk(r.w), xFull: (r) => r.w, v: (r, k) => r[k],
+            series: [{ key: "self_serve", color: "--s1", label: "Self-serve" }, { key: "sales_assisted", color: "--s2", label: "Sales-assisted" }],
+            fmtV: (v) => (v == null ? "—" : "$" + num(v, 2)), fmtAx: (v) => "$" + num(v, 0), tickEvery: 3, h: 220,
+          });
+        },
+        "The first weeks are volatile because they carry a handful of subscriptions each; read the level, not the spikes.",
+        [{ color: "--s1", label: "Self-serve", line: 1 }, { color: "--s2", label: "Sales-assisted", line: 1 }]));
+      c.appendChild(table("h12", "Unit economics by channel", "control_breakeven_by_channel.csv · control_effective_cac.csv",
+        [{ h: "Channel" }, { h: "Effective CAC", num: 1 }, { h: "CAC uplift", num: 1 }, { h: "Margin / cycle", num: 1 }, { h: "Cycles to break even", num: 1 }, { h: "Breakeven cycle reached", num: 1 }],
+        B.map((r) => {
+          const e = E.find((x) => x.effective_cac_row__channel === r.account__channel);
+          return [lab(r.account__channel), usd(N(e.effective_cac)), pct(N(e.cac_uplift_pct)), usd(N(r.contribution_margin_per_cycle)), num(N(r.avg_breakeven_cycles), 2), pct(N(r.share_breakeven_cycle_exposed))];
+        }),
+        "“Breakeven cycle reached” is the censoring column: the share of accounts whose payback cycle has actually come due inside the window."));
+    },
+  },
+
+  /* ================= 5. RETENTION & LIFECYCLE ================= */
+  {
+    id: "lifecycle", name: "Retention & Lifecycle",
+    lede: "Renewal behaviour across the billing cycles that came due inside the window. Every measure here is per cycle — a figure blended across cycles mixes a survival curve with an incremental hazard.",
+    build(c) {
+      const L = D.lifecycle_by_cycle, M = D.mrr_movement, SP = D.skip_and_pause, NR = D.base_never_rebilled[0];
+      c.appendChild(tiles("h12", "Renewal exposure", "control_base_never_rebilled.csv · control_lifecycle_by_cycle.csv", [
+        { k: "Base never rebilled", v: pct(N(NR.pct_base_never_rebilled)), d: int(N(NR.renewal_unexposed_accounts)) + " of " + int(N(NR.assessable_base_accounts)) + " accounts" },
+        { k: "Rebill rate, cycle 1", v: pct(N(L.find((r) => r.lifecycle_row__cycle_index === "1").rebill_rate)), d: "billed at their first renewal" },
+        { k: "GRR, latest cycle", v: pct(N(last(M).gross_revenue_retention)), d: "value surviving, ex-expansion" },
+        { k: "NRR, latest cycle", v: pct(N(last(M).net_revenue_retention)), d: "launch cohort, ≤4 cycles" },
+      ], "11.3% of the base has not yet faced a single renewal. That is what turns “churn is out of scope” from a caveat into a computed fact."));
+      c.appendChild(sheet("h6", "Survival and churn hazard by cycle", "control_lifecycle_by_cycle.csv",
+        (b) => lineChart(b, L, {
+          x: (r) => "Cycle " + r.lifecycle_row__cycle_index, v: (r, k) => N(r[k]),
+          series: [{ key: "retention_rate", color: "--s1", label: "Cumulative survival" }, { key: "monthly_churn_rate", color: "--s2", label: "Churn hazard" }],
+          fmtV: (v) => pct(v), fmtAx: (v) => pct(v, 0), max: 1, h: 216,
+        }),
+        "The hazard declines as survivors get stickier — the one shape a launch cohort can actually show.",
+        [{ color: "--s1", label: "Cumulative survival", line: 1 }, { color: "--s2", label: "Churn hazard (per cycle)", line: 1 }]));
+      c.appendChild(sheet("h6", "Skip and pause, by renewal cycle", "control_skip_and_pause.csv",
+        (b) => groupedBar(b, SP.filter((r) => r.lifecycle_row__cycle_index !== "0").map((r) => ({ label: "Cycle " + r.lifecycle_row__cycle_index, s: N(r.skip_rate), p: N(r.pause_rate) })), {
+          series: [{ key: "s", color: "--s3", label: "Skip rate" }, { key: "p", color: "--s4", label: "Pause rate" }],
+          fmtV: (v) => pct(v), fmtAx: (v) => pct(v, 0), h: 216,
+        }),
+        "Cycle 0 is excluded: it is the initial purchase, where skipping and pausing are impossible.",
+        [{ color: "--s3", label: "Skip rate" }, { color: "--s4", label: "Pause rate" }]));
+      c.appendChild(sheet("h12", "MRR movement by cycle", "control_mrr_movement.csv",
+        (b) => groupedBar(b, M.filter((r) => r.mrr_movement_cycle__movement_cycle_index !== "0").map((r) => ({
+          label: "Cycle " + r.mrr_movement_cycle__movement_cycle_index,
+          e: N(r.expansion_mrr_usd), co: N(r.contraction_mrr_usd), ch: N(r.churned_mrr_usd),
+        })), {
+          series: [{ key: "e", color: "--s3", label: "Expansion" }, { key: "co", color: "--s4", label: "Contraction" }, { key: "ch", color: "--s2", label: "Churned" }],
+          fmtV: (v) => "$" + int(v), fmtAx: (v) => "$" + int(v), h: 230,
+        }),
+        "Contraction is a tier downgrade and nothing else. Skipped and paused revenue is deferred, not lost, and is published on its own line rather than inside this bridge.",
+        [{ color: "--s3", label: "Expansion" }, { color: "--s4", label: "Contraction (downgrades)" }, { color: "--s2", label: "Churned" }]));
+      c.appendChild(table("h12", "Lifecycle by cycle", "control_lifecycle_by_cycle.csv · control_mrr_movement.csv",
+        [{ h: "Cycle" }, { h: "Rebill rate", num: 1 }, { h: "Survival", num: 1 }, { h: "Churn hazard", num: 1 }, { h: "GRR", num: 1 }, { h: "NRR", num: 1 }],
+        L.map((r) => {
+          const m = M.find((x) => x.mrr_movement_cycle__movement_cycle_index === r.lifecycle_row__cycle_index) || {};
+          return [`Cycle ${r.lifecycle_row__cycle_index}`, r.rebill_rate ? pct(N(r.rebill_rate)) : "—", pct(N(r.retention_rate)), pct(N(r.monthly_churn_rate)), m.gross_revenue_retention ? pct(N(m.gross_revenue_retention)) : "—", m.net_revenue_retention ? pct(N(m.net_revenue_retention)) : "—"];
+        }),
+        "Rebill rate is defined at cycle 1 only — it is the cycle-0-to-cycle-1 question."));
+    },
+  },
+
+  /* ================= 6. CS QUEUE ================= */
+  {
+    id: "queue", name: "CS Queue",
+    lede: "Who to call on Monday. The queue is split two ways: by which leg failed, and by whether the company caused the damage.",
+    build(c) {
+      const DR = D.at_risk_by_driver.filter((r) => r.account__risk_driver !== "healthy");
+      const DC = D.at_risk_by_damage_class.filter((r) => r.account__damage_class !== "healthy");
+      const ST = D.at_risk_by_state;
+      const total = DR.reduce((s, r) => s + N(r.at_risk_accounts), 0);
+      const sysI = DC.find((r) => r.account__damage_class === "system_inflicted");
+      const nice = (s) => s.replace(/_/g, " ").replace(/^./, (m) => m.toUpperCase());
+      c.appendChild(tiles("h12", "Outreach queue", "control_at_risk_by_driver.csv · control_at_risk_by_damage_class.csv", [
+        { k: "Accounts at risk", v: int(total), d: "32.5% of the assessable base" },
+        { k: "System-inflicted", v: int(N(sysI.at_risk_accounts)), d: "the company caused this" },
+        { k: "Recoverable MRR", v: usd(N(sysI.recoverable_mrr_usd)), d: "at stake in that segment" },
+        { k: "Physical-leg failures", v: int(DR.filter((r) => /physical|both/.test(r.account__risk_driver)).reduce((s, r) => s + N(r.at_risk_accounts), 0)), d: "mechanically tied to Ohio" },
+      ], "Prioritise system-inflicted: those accounts churned because of a delivery failure the company owns, which makes the outreach credible."));
+      c.appendChild(sheet("h6", "At-risk accounts by failure driver", "control_at_risk_by_driver.csv",
+        (b) => hbar(b, sortBy(DR, (r) => N(r.at_risk_accounts)), {
+          k: (r) => nice(r.account__risk_driver), v: (r) => N(r.at_risk_accounts), fmtV: (v) => int(v),
+          color: (r) => (/physical|both/.test(r.account__risk_driver) ? "--s2" : "--s1"),
+          rows: (r) => [["Accounts", int(N(r.at_risk_accounts))], ["Share of queue", pct(N(r.at_risk_accounts) / total)]],
+        }),
+        "Counts, not a rate: <code>risk_driver</code> is assigned from the same flags that define at-risk, so a rate here would read 100% in every bucket.",
+        [{ color: "--s2", label: "Physical leg involved" }, { color: "--s1", label: "Digital only" }]));
+      c.appendChild(sheet("h6", "At-risk rate by state", "control_at_risk_by_state.csv",
+        (b) => hbar(b, sortBy(ST, (r) => N(r.at_risk_account_rate)), {
+          k: (r) => r.account__state, kFull: (r) => STATE_NAME[r.account__state],
+          v: (r) => N(r.at_risk_account_rate), fmtV: (v) => pct(v),
+          color: (r) => (r.account__state === "OH" ? "--s2" : "--s1"), ref: 0.3, refLabel: "30%",
+          rows: (r) => [["At-risk rate", pct(N(r.at_risk_account_rate))], ["Accounts", int(N(r.at_risk_accounts))]],
+        }),
+        "The rate belongs on a population cut like this one, where the denominator is a genuinely different set."));
+      c.appendChild(table("h12", "Damage classification", "control_at_risk_by_damage_class.csv",
+        [{ h: "Damage class" }, { h: "Accounts", num: 1 }, { h: "Recoverable MRR", num: 1 }, { h: "Reading" }],
+        DC.map((r) => [nice(r.account__damage_class), int(N(r.at_risk_accounts)), usd(N(r.recoverable_mrr_usd)),
+          r.account__damage_class === "system_inflicted" ? "A delivery defect the company owns — call these first."
+            : r.account__damage_class === "self_selected" ? "Short-tenure accounts with no delivery defect. Only 11 of them: tenure does not discriminate in this data, which is itself the finding."
+              : "Neither signal is decisive. Treat as a two-bucket queue in practice."]),
+        "The three-way split is reported honestly rather than presented as actionable: <b>self-selected is 11 accounts</b>, and mean tenure is 661.7 days in system-inflicted against 669.0 in ambiguous."));
+    },
+  },
+
+  /* ================= 7. DECISION CONTRACT ================= */
+  {
+    id: "contract", name: "Decision Contract",
+    lede: "Every published metric with a threshold set before the value was observed, the segment that value came from, and the action its owner takes when it fires. This is the sheet that makes the analysis falsifiable.",
+    build(c) {
+      const C = D.decision_contract;
+      const trig = C.filter((r) => r.status === "triggered");
+      const byOwner = {};
+      trig.forEach((r) => { byOwner[r.owner] = (byOwner[r.owner] || 0) + 1; });
+      c.appendChild(tiles("h12", "Contract state", "control_decision_contract.csv", [
+        { k: "Metrics under contract", v: int(C.length), d: "each with a declared consequence" },
+        { k: "Triggered", v: int(trig.length), d: "threshold breached" },
+        { k: "Within tolerance", v: int(C.length - trig.length), d: "no action required" },
+        { k: "Owners with actions", v: int(Object.keys(byOwner).length), d: Object.entries(byOwner).sort((a, b) => b[1] - a[1]).map((e) => e[0] + " " + e[1]).join(" · ") },
+      ]));
+      const q = { growing: "Is it growing?", staying: "Are they staying?", valuable: "Is it valuable?", efficient: "Is it efficient?" };
+      ["growing", "staying", "valuable", "efficient"].forEach((k) => {
+        const rows = C.filter((r) => r.decision_question === k)
+          .sort((a, b) => (a.status === b.status ? a.metric_name.localeCompare(b.metric_name) : a.status === "triggered" ? -1 : 1));
+        c.appendChild(table("h12", q[k], "control_decision_contract.csv",
+          [{ h: "Metric" }, { h: "Value", num: 1 }, { h: "Segment" }, { h: "Threshold", num: 1 }, { h: "Status" }, { h: "Action if triggered" }, { h: "Owner" }],
+          rows.map((r) => {
+            const v = N(r.current_value);
+            const t = N(r.threshold_value);
+            const small = t != null && Math.abs(t) <= 1.5;
+            const f = (x) => (x == null ? "—" : small ? num(x, 3) : num(x, 2));
+            const dir = { below: "below", above: "above", at_or_above: "at or above" }[r.threshold_direction] || r.threshold_direction;
+            return [`<code>${esc(r.metric_name)}</code>`, f(v), r.segment ? `<span class="seg">${esc(r.segment)}</span>` : "<span class=\"seg\">—</span>",
+              `${dir} ${f(t)}`,
+              `<span class="pill ${r.status === "triggered" ? "trig" : "ok"}">${r.status === "triggered" ? "triggered" : "ok"}</span>`,
+              esc(r.action), esc(r.owner)];
+          })));
+      });
+    },
+  },
+];
+
+/* ---------- mount ---------- */
+const tabsEl = document.getElementById("tabs"), canvas = document.getElementById("canvas");
+TABS.forEach((t, i) => {
+  const b = document.createElement("button");
+  b.className = "tab"; b.type = "button"; b.role = "tab"; b.id = "tab-" + t.id;
+  b.setAttribute("aria-selected", i === 0 ? "true" : "false");
+  b.setAttribute("aria-controls", "p-" + t.id);
+  b.innerHTML = `<span class="n">${i + 1}</span>${esc(t.name)}`;
+  b.addEventListener("click", () => select(i));
+  tabsEl.appendChild(b);
+  const p = document.createElement("section");
+  p.className = "panel"; p.id = "p-" + t.id; p.role = "tabpanel";
+  p.setAttribute("aria-labelledby", "tab-" + t.id);
+  if (i !== 0) p.hidden = true;
+  p.innerHTML = `<p class="lede">${t.lede}</p>`;
+  const g = document.createElement("div"); g.className = "grid";
+  p.appendChild(g); t.build(g);
+  canvas.appendChild(p);
+});
+function select(i) {
+  [...tabsEl.children].forEach((b, j) => b.setAttribute("aria-selected", i === j ? "true" : "false"));
+  [...canvas.children].forEach((p, j) => (p.hidden = i !== j));
+  hideTip();
+  window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion:reduce)").matches ? "auto" : "smooth" });
+}
+tabsEl.addEventListener("keydown", (e) => {
+  const i = [...tabsEl.children].findIndex((b) => b.getAttribute("aria-selected") === "true");
+  if (e.key === "ArrowRight") { select((i + 1) % TABS.length); tabsEl.children[(i + 1) % TABS.length].focus(); }
+  if (e.key === "ArrowLeft") { const n = (i - 1 + TABS.length) % TABS.length; select(n); tabsEl.children[n].focus(); }
+});
+const nRows = Object.values(D).reduce((s, r) => s + r.length, 0);
+document.getElementById("meta").textContent = `50 metrics · 25 extracts · ${nRows} rows`;
+document.getElementById("status").innerHTML =
+  `<span><b>Data source</b> dashboard/control_*.csv — dbt Semantic Layer extracts (MetricFlow)</span>` +
+  `<span><b>Window</b> 2026-01-05 → 2026-05-03</span>` +
+  `<span><b>Grain</b> as exported; no re-aggregation in this page</span>`;
+
+</script>
