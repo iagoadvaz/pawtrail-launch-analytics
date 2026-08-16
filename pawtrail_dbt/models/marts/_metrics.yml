@@ -343,3 +343,108 @@ metrics:
     type_params:
       numerator: never_logged_in_accounts
       denominator: mature_accounts_30d
+
+  # The most-cited subscription metric across the four references (sticky.io #6):
+  # what share of accounts that reached cycle 1 actually renewed. Different from
+  # retention: a paused or skipped account is still a subscriber but did NOT
+  # rebill, and the replenishment model makes that difference material.
+  - name: rebill_rate
+    type: ratio
+    label: "Rebill Rate (cycle 0 to cycle 1)"
+    type_params:
+      numerator: cycle_one_rebilled_accounts
+      denominator: cycle_one_accounts
+
+  - name: retention_rate
+    type: ratio
+    # CUMULATIVE SURVIVAL at cycle n, NOT the complement of monthly_churn_rate.
+    # The two share a name-shape and answer different questions; reading this as
+    # 1 - churn is wrong. ONLY MEANINGFUL GROUPED BY
+    # lifecycle_row__cycle_index -- see the same note on weekly_attach.
+    label: "Cumulative Survival at Cycle (share still subscribed)"
+    type_params:
+      numerator: retained_accounts
+      denominator: cycle_rows
+
+  # HAZARD, not share-of-everyone. The denominator is accounts ALIVE ENTERING
+  # the cycle, never every row of the spine: an account that cancelled at cycle
+  # 1 is carried forward as 'canceled' and had no opportunity to churn at cycle
+  # 2. Using cycle_rows understates the hazard by 24% at cycle 2 and 31% at
+  # cycle 3, and -- because the dead-account share grows monotonically -- makes
+  # the curve look like it declines faster than it does.
+  #
+  # ONLY MEANINGFUL GROUPED BY lifecycle_row__cycle_index. Queried ungrouped it
+  # blends hazards across cycles and means nothing.
+  - name: monthly_churn_rate
+    type: ratio
+    label: "Churn Hazard per Billing Cycle (denominator = alive entering cycle)"
+    type_params:
+      numerator: churned_accounts
+      denominator: at_risk_accounts_this_cycle
+
+  # Skip is the metric Crystallize names for the replenishment model and which
+  # does not exist in SaaS. Tracked as both volume AND rate because Shopify asks
+  # explicitly for the volume, not only the rate.
+  - name: skip_rate
+    type: ratio
+    label: "Skip Rate per Cycle"
+    type_params:
+      numerator: skipped_cycles
+      denominator: cycle_rows
+
+  - name: pause_rate
+    type: ratio
+    label: "Pause Rate per Cycle"
+    type_params:
+      numerator: paused_cycles
+      denominator: cycle_rows
+
+  # GRR: how much of the starting revenue survives, IGNORING expansion. Capped
+  # at 100% by definition.
+  - name: gross_revenue_retention
+    type: derived
+    label: "Gross Revenue Retention"
+    type_params:
+      expr: (starting - churned - contraction) / nullif(starting, 0)
+      metrics:
+        - name: starting_mrr_usd
+          alias: starting
+        - name: churned_mrr_usd
+          alias: churned
+        - name: contraction_mrr_usd
+          alias: contraction
+
+  # NRR: the same, INCLUDING expansion and reactivation -- which is why it can
+  # exceed 100%, and why it is only honest once spec item 2.7 (tier change)
+  # exists. See the header of fct_mrr_movement.sql.
+  #
+  # READ THE LABEL. Item 2.7 removes the STRUCTURAL cap (expansion is no longer
+  # identically zero) but not the NUMERICAL one: contraction is defined as cash
+  # not billed, so transient skips are scored as downgrades and NRR runs
+  # 0.69-0.80. It is a launch-cohort reading over at most 4 cycles, not a figure
+  # to compare against a published benchmark.
+  - name: net_revenue_retention
+    type: derived
+    label: "Net Revenue Retention (launch cohort, <=4 cycles, not benchmark-comparable)"
+    type_params:
+      expr: (starting + expansion - churned - contraction) / nullif(starting, 0)
+      metrics:
+        - name: starting_mrr_usd
+          alias: starting
+        - name: expansion_mrr_usd
+          alias: expansion
+        - name: churned_mrr_usd
+          alias: churned
+        - name: contraction_mrr_usd
+          alias: contraction
+
+  # Revenue a live subscription did not bill this cycle because it skipped or
+  # paused. Published beside the MRR bridge and never inside it: the bridge runs
+  # on subscription value, so a skip does not change what a subscription is
+  # worth. This is the replenishment-specific signal the cash-based bridge used
+  # to hide inside contraction.
+  - name: deferred_billings_usd
+    type: simple
+    label: "Deferred Billings (skipped and paused revenue)"
+    type_params:
+      measure: deferred_billings_usd

@@ -1,11 +1,11 @@
 # PawTrail Launch Analytics — Metrics Dictionary
 
 This is a human-readable companion to the MetricFlow semantic layer defined in
-`pawtrail_dbt/models/marts/_metrics.yml` (42 metrics) and
-`pawtrail_dbt/models/marts/_semantic_models.yml` (11 semantic models). Every
+`pawtrail_dbt/models/marts/_metrics.yml` (50 metrics) and
+`pawtrail_dbt/models/marts/_semantic_models.yml` (13 semantic models). Every
 metric below is queryable via `mf query --metrics <name>`.
 
-**`mf list metrics` returns 90 names, not 42.** The 48 extras are not
+**`mf list metrics` returns 112 names, not 50.** The 62 extras are not
 undocumented metrics; they are the measures behind the 33, exposed as
 queryable names by `create_metric: true` on their declarations —
 `mature_accounts_30d`, `kits_shipped`, `channel_spend_usd`, `pitches_won` and
@@ -343,6 +343,58 @@ rate is a **population** question and belongs on `account__state` or
 numerator (`control_at_risk_by_state.csv`).
 
 ---
+
+## 6. Subscription lifecycle
+
+Renewal behaviour over the billing cycles that came due inside the window.
+Every metric here is grouped by `lifecycle_row__cycle_index` or
+`mrr_movement_cycle__movement_cycle_index`: they describe a cycle, and a
+figure blended across cycles mixes a cumulative survival curve with an
+incremental hazard.
+
+### rebill_rate
+- **Definition:** Share of accounts that reached the end of cycle 0 alive and were actually billed at cycle 1 — the replenishment sector's most-cited retention number.
+- **Formula:** `ratio` — `cycle_one_rebilled_accounts ÷ cycle_one_accounts`
+- **Source:** `subscription_lifecycle` (`fct_subscription_lifecycle`)
+- **Assumption:** "Billed" excludes skips and pauses. Those accounts are still subscribers, which is why `retention_rate` counts them and this does not; the gap between the two is the replenishment-specific signal a SaaS model has no room for.
+
+### retention_rate
+- **Definition:** Cumulative survival: the share of accounts still subscribed at a given cycle, counting skipped and paused accounts as retained.
+- **Formula:** `ratio` — `retained_accounts ÷ cycle_rows`
+- **Source:** `subscription_lifecycle`
+
+### monthly_churn_rate
+- **Definition:** The per-cycle churn hazard — cancellations in a cycle over the accounts that entered it alive.
+- **Formula:** `ratio` — `churned_accounts ÷ at_risk_accounts_this_cycle`
+- **Source:** `subscription_lifecycle`
+- **Assumption:** The denominator is the **at-risk** population, not every row at that cycle. Accounts that cancelled in an earlier cycle are carried forward in the spine and had no opportunity to churn again; leaving them in understates the hazard by 24% at cycle 2 and 31% at cycle 3, and does so more the later the cycle — which flattens the one property of the curve that matters, its shape.
+
+### skip_rate
+- **Definition:** Share of cycles in which a live subscription skipped its shipment.
+- **Formula:** `ratio` — `skipped_cycles ÷ cycle_rows`
+- **Source:** `subscription_lifecycle`
+
+### pause_rate
+- **Definition:** Share of cycles in which a subscription was paused.
+- **Formula:** `ratio` — `paused_cycles ÷ cycle_rows`
+- **Source:** `subscription_lifecycle`
+
+### gross_revenue_retention
+- **Definition:** How much of a cycle's starting subscription value survives, ignoring expansion. Cannot exceed 100% by construction.
+- **Formula:** `derived` — `(starting − churned − contraction) ÷ starting`
+- **Source:** `mrr_movement` (`fct_mrr_movement`)
+
+### net_revenue_retention
+- **Definition:** The same, including expansion from tier upgrades.
+- **Formula:** `derived` — `(starting + expansion − churned − contraction) ÷ starting`
+- **Source:** `mrr_movement`
+- **Assumption:** Read this as a **launch-cohort figure over at most four cycles, not a benchmark-comparable NRR.** The upgrade arm removes the structural cap — expansion is non-zero and NRR sits above GRR at every cycle — but a 2.2% upgrade rate on a roughly $10 tier delta cannot offset a 20%+ first-cycle hazard, so it reads 0.77–0.93 here. Do not tune the upgrade rate to lift it; that manufactures the number the metric exists to measure.
+
+### deferred_billings_usd
+- **Definition:** Revenue a live subscription did not bill this cycle because it skipped or paused. Published beside the MRR bridge, never inside it.
+- **Formula:** `simple` — measure `deferred_billings_usd`.
+- **Source:** `mrr_movement`
+- **Assumption:** This is what keeps `contraction_mrr_usd` meaning one thing. The bridge runs on subscription **value** at the tier in force, so a skip does not change what a subscription is worth and never enters contraction. Built on cash billed instead, cycle 1 contraction reads $6,387.79 — of which $6,247.79 is deferred billing and only $140.00 is a genuine downgrade.
 
 ## Future extensions
 

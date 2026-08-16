@@ -9,6 +9,7 @@ from data.olist_reference.fetch_olist_reference_distributions import (
     OUTPUT_DIR as _OLIST_REFERENCE_OUTPUT_DIR,
 )
 from generator.generate_activity import generate_digital_engagement, generate_kit_deliveries
+from generator.generate_subscription_lifecycle import generate_subscription_lifecycle
 from generator.generate_business_data import (
     generate_marketing_spend,
     generate_premium_base,
@@ -43,6 +44,7 @@ DELIVERY_SEED = SEED + 1
 ENGAGEMENT_SEED = SEED + 2
 SPEND_SEED = SEED + 3
 PITCH_SEED = SEED + 4
+LIFECYCLE_SEED = SEED + 5
 
 
 def _load_reference_distributions() -> tuple[pd.Series, "pd.Series[int]"]:
@@ -79,6 +81,13 @@ def build_seeds() -> None:
     marketing_spend = generate_marketing_spend(LAUNCH_DATE, LAUNCH_DAYS, seed=SPEND_SEED)
     sales_pitches = generate_sales_pitches(subscriptions, seed=PITCH_SEED)
 
+    subscription_events = generate_subscription_lifecycle(
+        subscriptions,
+        digital_engagement,
+        launch_days=LAUNCH_DAYS,
+        seed=LIFECYCLE_SEED,
+    )
+
     subscriptions.to_csv(SEEDS_DIR / "raw_subscriptions.csv", index=False)
     kit_deliveries.to_csv(SEEDS_DIR / "raw_kit_deliveries.csv", index=False)
     digital_engagement.to_csv(SEEDS_DIR / "raw_digital_engagement.csv", index=False)
@@ -86,6 +95,7 @@ def build_seeds() -> None:
     pricing.to_csv(SEEDS_DIR / "raw_pricing.csv", index=False)
     marketing_spend.to_csv(SEEDS_DIR / "raw_marketing_spend.csv", index=False)
     sales_pitches.to_csv(SEEDS_DIR / "raw_sales_pitches.csv", index=False)
+    subscription_events.to_csv(SEEDS_DIR / "raw_subscription_events.csv", index=False)
 
 
 if __name__ == "__main__":

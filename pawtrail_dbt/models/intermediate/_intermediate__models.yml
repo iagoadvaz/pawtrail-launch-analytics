@@ -42,3 +42,31 @@ models:
       - name: renewal_due_date
         tests:
           - not_null
+
+  - name: int_subscription_state
+    columns:
+      - name: subscription_state_key
+        tests:
+          - unique
+          - not_null
+      - name: state
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active', 'skipped', 'paused', 'canceled']
+      - name: is_retained
+        tests:
+          - not_null
+      - name: churned_this_cycle
+        tests:
+          - not_null
+      - name: at_risk_this_cycle
+        tests:
+          - not_null
+      - name: pet_tier_at_cycle
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['small', 'medium', 'large']

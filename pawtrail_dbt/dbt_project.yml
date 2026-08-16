@@ -41,6 +41,11 @@ vars:
   # flatter the result. It lives here, not in a Tableau constant, so the target
   # on the chart and the target quoted in NARRATIVE.md cannot disagree.
   attach_rate_launch_target: 0.15
+  # Mirrors NON_ACTIVATED_CHURN_MULTIPLIER in
+  # generator/generate_subscription_lifecycle.py. It exists so the recovery test
+  # reads the value from one source -- a silent drift between generator and test
+  # would make the test pass while validating the wrong number.
+  planted_non_activated_churn_multiplier: 2.0
   # Market benchmark cited by Crystallize (spec §1.6). It lives here rather than
   # in a dashboard constant for the same reason as attach_rate_launch_target: the
   # target on the chart and the target quoted in the memo cannot disagree.

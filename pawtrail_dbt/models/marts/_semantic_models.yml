@@ -605,3 +605,124 @@ semantic_models:
         agg: sum
         expr: eligible_premium_accounts
         create_metric: true
+
+  - name: subscription_lifecycle
+    model: ref('fct_subscription_lifecycle')
+    defaults:
+      agg_time_dimension: cycle_due_date
+    entities:
+      - name: lifecycle_row
+        type: primary
+        expr: subscription_state_key
+      - name: account
+        type: foreign
+        expr: account_id
+    dimensions:
+      - name: cycle_due_date
+        type: time
+        expr: renewal_due_date
+        type_params:
+          time_granularity: day
+      - name: cycle_index
+        type: categorical
+      - name: subscription_state
+        type: categorical
+        expr: state
+    measures:
+      - name: cycle_one_accounts
+        agg: sum
+        expr: case when is_cycle_one then 1 else 0 end
+        create_metric: true
+      - name: cycle_one_rebilled_accounts
+        agg: sum
+        expr: case when rebilled_at_cycle_one then 1 else 0 end
+        create_metric: true
+      - name: retained_accounts
+        agg: sum
+        expr: case when is_retained then 1 else 0 end
+        create_metric: true
+      - name: churned_accounts
+        agg: sum
+        expr: case when churned_this_cycle then 1 else 0 end
+        create_metric: true
+      - name: at_risk_accounts_this_cycle
+        agg: sum
+        expr: case when at_risk_this_cycle then 1 else 0 end
+        create_metric: true
+      - name: cycle_rows
+        agg: count
+        expr: subscription_state_key
+        create_metric: true
+      - name: skipped_cycles
+        agg: sum
+        expr: case when state = 'skipped' then 1 else 0 end
+        create_metric: true
+      - name: paused_cycles
+        agg: sum
+        expr: case when state = 'paused' then 1 else 0 end
+        create_metric: true
+      - name: cycle_mrr_usd
+        agg: sum
+        expr: cycle_mrr_usd
+        create_metric: true
+
+  - name: mrr_movement
+    model: ref('fct_mrr_movement')
+    entities:
+      - name: mrr_movement_cycle
+        type: primary
+        expr: mrr_movement_key
+    dimensions:
+      - name: movement_cycle_index
+        type: categorical
+        expr: cycle_index
+      # REQUIRED. MetricFlow demands an agg_time_dimension for every measure,
+      # and this model has five. Without it `dbt parse` fails with
+      # "Aggregation time dimension for measure starting_mrr_usd is not set!" --
+      # a parse error, which gates dbt build and stops every Phase 1 test
+      # running too. Every other semantic model in this project that carries
+      # measures declares one.
+      #
+      # fct_mrr_movement is aggregated to cycle_index alone, which spans ~120
+      # distinct due dates, so the mart must also be regrained to
+      # (cycle_index, cycle_due_week) and carry that column. Regraining is the
+      # better fix regardless: it is what lets the movement bridge be read as a
+      # time series rather than as four opaque buckets.
+      - name: cycle_due_week
+        type: time
+        expr: cycle_due_week
+        type_params:
+          time_granularity: week
+    defaults:
+      agg_time_dimension: cycle_due_week
+    measures:
+      - name: starting_mrr_usd
+        agg: sum
+        expr: starting_mrr_usd
+        create_metric: true
+      - name: ending_mrr_usd
+        agg: sum
+        expr: ending_mrr_usd
+        create_metric: true
+      - name: expansion_mrr_usd
+        agg: sum
+        expr: expansion_mrr_usd
+        create_metric: true
+      - name: contraction_mrr_usd
+        agg: sum
+        expr: contraction_mrr_usd
+        create_metric: true
+      - name: churned_mrr_usd
+        agg: sum
+        expr: churned_mrr_usd
+        create_metric: true
+      # Beside the bridge, not inside it: revenue a live subscription did not
+      # bill this cycle because it skipped or paused. Publishing it on its own
+      # line is what lets contraction mean "a tier went down" and nothing else.
+      # No create_metric flag: a simple metric of the same name is declared in
+      # _metrics.yml, so that this number carries a definition and an
+      # assumptions note rather than appearing as a bare measure proxy. Same
+      # convention as eligible_premium_accounts.
+      - name: deferred_billings_usd
+        agg: sum
+        expr: deferred_billings_usd

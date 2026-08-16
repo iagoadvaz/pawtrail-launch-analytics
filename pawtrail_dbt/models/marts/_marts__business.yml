@@ -197,3 +197,40 @@ models:
       - name: margin_share
         tests:
           - not_null
+
+  - name: fct_subscription_lifecycle
+    columns:
+      - name: subscription_state_key
+        tests:
+          - unique
+          - not_null
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: cycle_mrr_usd
+        tests:
+          - not_null
+      - name: state
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['active', 'skipped', 'paused', 'canceled']
+
+  - name: fct_mrr_movement
+    columns:
+      # The surrogate key, not cycle_index: the grain is (cycle, due week), so
+      # cycle_index repeats across weeks and a unique test on it would fail.
+      - name: mrr_movement_key
+        tests:
+          - unique
+          - not_null
+      - name: starting_mrr_usd
+        tests:
+          - not_null
+      - name: ending_mrr_usd
+        tests:
+          - not_null

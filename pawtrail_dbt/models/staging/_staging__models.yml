@@ -47,3 +47,22 @@ models:
               arguments:
                 to: ref('stg_subscriptions')
                 field: account_id
+
+  - name: stg_subscription_events
+    columns:
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_subscriptions')
+                field: account_id
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['activated', 'renewed', 'skipped', 'paused', 'resumed', 'tier_changed', 'canceled']
+      - name: event_date
+        tests:
+          - not_null
