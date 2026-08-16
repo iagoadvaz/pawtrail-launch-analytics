@@ -2064,6 +2064,13 @@ total_margin as (
 
 select
     f.state,
+    -- The snapshot's own date, carried so the semantic model has a time
+    -- dimension: MetricFlow requires an agg_time_dimension for every measure,
+    -- and this model has three. Declaring it in _semantic_models.yml without
+    -- producing it here leaves `dbt build` green and fails 17 checks at
+    -- `mf validate-configs` -- the model is a single snapshot at the final
+    -- week, so every row carries the same value by construction.
+    l.final_week as snapshot_date,
     f.cumulative_subscriptions,
     f.eligible_premium_accounts,
     f.cumulative_subscriptions * 1.0 / nullif(f.eligible_premium_accounts, 0) as penetration,
@@ -2079,6 +2086,7 @@ from final_state f
 left join last_week_new n on f.state = n.state
 left join margin_by_state m on f.state = m.state
 cross join total_margin t
+cross join latest_week l
 ```
 
 - [ ] **Step 2: Add the schema tests**
@@ -2143,9 +2151,10 @@ In `_semantic_models.yml`, append:
         type: categorical
       # Same MetricFlow requirement as the `accounts` model in Task 3: measures
       # need an agg_time_dimension or `dbt parse` fails. fct_state_saturation is
-      # a single snapshot at the final week, so add a `snapshot_date` column to
-      # the model (`select ... max(signup_week) over () as snapshot_date`) and
-      # declare it here.
+      # a single snapshot at the final week, so the model carries `snapshot_date`
+      # (see its final select) and it is declared here. Both halves are load
+      # bearing: declaring the dimension without producing the column builds
+      # green under dbt and fails only at `mf validate-configs`.
       - name: snapshot_date
         type: time
         expr: snapshot_date
