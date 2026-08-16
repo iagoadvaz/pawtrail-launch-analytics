@@ -6,8 +6,8 @@ docs/context/
 # Python
 __pycache__/
 *.pyc
-.venv/
-venv/
+.venv
+venv
 
 # dbt
 pawtrail_dbt/target/
