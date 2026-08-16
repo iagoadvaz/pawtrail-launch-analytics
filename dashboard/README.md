@@ -24,7 +24,8 @@ Phase 1 and 2 plans for the later additions.
 ## The Tableau build reference
 
 `workbook_mock.html` is a working mock of the workbook as seven tabs, built from
-these same `control_*.csv` extracts. It is not the deliverable — `index.html` is
+these same `control_*.csv` extracts, and published at
+[PawTrail Launch Workbook](https://claude.ai/code/artifact/79f53df6-a8d5-45a6-a0c5-86f35984c375). It is not the deliverable — `index.html` is
 — and the two answer different questions. `index.html` is the generated static
 page organised around the four decision questions; the mock is the sheet-by-sheet
 reference for rebuilding this in Tableau Public, where each tab is one dashboard

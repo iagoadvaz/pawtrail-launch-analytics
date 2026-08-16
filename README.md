@@ -37,7 +37,9 @@ kit deliveries, pricing, spend, sales pitches)
   the `mf` CLI
 - **Dashboard**: Tableau Public — not yet published (deferred; see
   `dashboard/README.md`), but the metric exports it will be built from are
-  already in `dashboard/`
+  already in `dashboard/`. A seven-tab interactive mock of the intended
+  workbook, built from those same exports, is published at
+  [PawTrail Launch Workbook](https://claude.ai/code/artifact/79f53df6-a8d5-45a6-a0c5-86f35984c375)
 
 ## How to run
 
@@ -81,8 +83,10 @@ mf query --metrics activation_rate_30d --group-by metric_time__week
 - `data/olist_reference/` — real-data extraction (purchase-to-delivery duration, state share)
 - `generator/` — synthetic PawTrail data generators (pytest-covered)
 - `pawtrail_dbt/` — dbt project: staging → intermediate → marts, semantic layer
-- `dashboard/` — metric exports (`control_*.csv`); Tableau Public workbook
-  link not yet published (see `dashboard/README.md`)
+- `dashboard/` — metric exports (`control_*.csv`), the generated `index.html`,
+  and `workbook_mock.html`, the seven-tab Tableau build reference
+  ([published mock](https://claude.ai/code/artifact/79f53df6-a8d5-45a6-a0c5-86f35984c375)); Tableau Public workbook link not yet published
+  (see `dashboard/README.md`)
 - `docs/superpowers/specs/` — design spec
 - `docs/superpowers/plans/` — implementation plan
 - `NARRATIVE.md` — 1-page launch-health memo
