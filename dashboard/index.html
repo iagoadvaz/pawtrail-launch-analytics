@@ -1,0 +1,99 @@
+<title>PawTrail Decision Board</title>
+<style>
+:root{color-scheme:light;--plane:#f6f7f4;--surface:#fcfcfb;--sunken:#eeefe9;
+--ink:#0b0b0b;--ink-2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+--hair:rgba(11,11,11,.10);--s1:#2a78d6;--s1-soft:rgba(42,120,214,.12);
+--s2:#eb6834;--s2-soft:rgba(235,104,52,.14);--good:#0ca30c;--warning:#fab219;
+--critical:#d03b3b;--good-ink:#006300;--critical-ink:#b02c2c;--warning-ink:#8a6100;
+--void:rgba(11,11,11,.045);--void-line:rgba(11,11,11,.14);
+--sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+--plane:#0c0e0c;--surface:#1a1a19;--sunken:#141513;--ink:#fff;--ink-2:#c3c2b7;
+--muted:#898781;--grid:#2c2c2a;--axis:#383835;--hair:rgba(255,255,255,.10);
+--s1:#3987e5;--s1-soft:rgba(57,135,229,.18);--s2:#d95926;--s2-soft:rgba(217,89,38,.20);
+--good-ink:#0ca30c;--critical-ink:#e37070;--warning-ink:#fab219;
+--void:rgba(255,255,255,.045);--void-line:rgba(255,255,255,.16)}}
+:root[data-theme="dark"]{color-scheme:dark;--plane:#0c0e0c;--surface:#1a1a19;
+--sunken:#141513;--ink:#fff;--ink-2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;
+--axis:#383835;--hair:rgba(255,255,255,.10);--s1:#3987e5;--s1-soft:rgba(57,135,229,.18);
+--s2:#d95926;--s2-soft:rgba(217,89,38,.20);--good-ink:#0ca30c;--critical-ink:#e37070;
+--warning-ink:#fab219;--void:rgba(255,255,255,.045);--void-line:rgba(255,255,255,.16)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--sans);
+font-size:15px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 24px 72px}
+h1{font-size:29px;letter-spacing:-.02em;margin:0;font-weight:640;text-wrap:balance}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.11em;
+text-transform:uppercase;color:var(--muted);margin:40px 0 12px}
+.band-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+padding-bottom:10px;border-bottom:1px solid var(--hair);margin-top:44px}
+.band-head h2{font-size:21px;font-weight:620;letter-spacing:-.015em;margin:0}
+.qmark{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--muted)}
+.grid{display:grid;gap:14px;margin-top:16px;
+grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.card{background:var(--surface);border:1px solid var(--hair);border-radius:3px;
+padding:16px 18px 14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.card h3{font-size:14px;font-weight:620;margin:0}
+.mid{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.figure{font-size:34px;font-weight:640;letter-spacing:-.022em;margin:10px 0 0}
+.figsub{font-size:12.5px;color:var(--ink-2);margin-top:3px}
+.void{background:repeating-linear-gradient(135deg,transparent 0 7px,var(--void) 7px 14px),
+var(--surface);border:1px dashed var(--void-line)}
+.void .figure{color:var(--muted);font-size:20px;font-family:var(--mono);font-weight:600}
+.blocked{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px;line-height:1.55}
+.blocked b{color:var(--ink-2)}
+.unlock{display:inline-flex;align-self:flex-start;margin-top:auto;padding:4px 9px;
+border-radius:2px;background:var(--s1-soft);color:var(--ink);font-family:var(--mono);
+font-size:10.5px;font-weight:700;letter-spacing:.04em}
+details{margin-top:12px;border-top:1px solid var(--hair);padding-top:8px}
+summary{font-family:var(--mono);font-size:11px;color:var(--muted);cursor:pointer;list-style:none}
+summary::before{content:"\25b8 "}details[open] summary::before{content:"\25be "}
+summary:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+.tablewrap{overflow-x:auto;margin-top:8px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:right;padding:5px 9px;border-bottom:1px solid var(--hair);
+font-variant-numeric:tabular-nums;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);
+text-transform:uppercase}
+.v-ok{color:var(--good-ink);font-family:var(--mono);font-size:11px;font-weight:700}
+.v-trig{color:var(--critical-ink);font-family:var(--mono);font-size:11px;font-weight:700}
+.v-none{color:var(--muted);font-family:var(--mono);font-size:11px}
+.stamp{font-family:var(--mono);font-size:11px;color:var(--muted)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--hair);
+color:var(--ink-2);font-size:13px}
+</style>
+<div class="wrap">
+<header>
+<h1>PawTrail — launch decision board</h1>
+<p class="stamp">Generated from dashboard/control_*.csv · 17 thresholds triggered</p>
+</header>
+
+<p class="eyebrow">Question 1</p>
+<div class="band-head"><span class="qmark">Q1</span><h2>Are we growing?</h2></div>
+<div class="grid"><div class="card"><h3>Cumulative attach rate</h3><span class="mid">attach_rate · end of window</span><div class="figure">20.0%</div><div class="figsub">1.33× the launch target</div></div><details><summary>View table</summary><div class="tablewrap"><table><thead><tr><th>Week</th><th>Attach rate</th><th>vs. target</th></tr></thead><tbody><tr><td>2026-01-05 00:00:00</td><td>0.1%</td><td>0.01×</td></tr><tr><td>2026-01-12 00:00:00</td><td>0.5%</td><td>0.03×</td></tr><tr><td>2026-01-19 00:00:00</td><td>1.0%</td><td>0.07×</td></tr><tr><td>2026-01-26 00:00:00</td><td>1.7%</td><td>0.11×</td></tr><tr><td>2026-02-02 00:00:00</td><td>2.9%</td><td>0.20×</td></tr><tr><td>2026-02-09 00:00:00</td><td>4.5%</td><td>0.30×</td></tr><tr><td>2026-02-16 00:00:00</td><td>6.4%</td><td>0.43×</td></tr><tr><td>2026-02-23 00:00:00</td><td>8.6%</td><td>0.57×</td></tr><tr><td>2026-03-02 00:00:00</td><td>11.1%</td><td>0.74×</td></tr><tr><td>2026-03-09 00:00:00</td><td>13.4%</td><td>0.89×</td></tr><tr><td>2026-03-16 00:00:00</td><td>15.2%</td><td>1.02×</td></tr><tr><td>2026-03-23 00:00:00</td><td>16.8%</td><td>1.12×</td></tr><tr><td>2026-03-30 00:00:00</td><td>18.0%</td><td>1.20×</td></tr><tr><td>2026-04-06 00:00:00</td><td>18.9%</td><td>1.26×</td></tr><tr><td>2026-04-13 00:00:00</td><td>19.4%</td><td>1.29×</td></tr><tr><td>2026-04-20 00:00:00</td><td>19.7%</td><td>1.32×</td></tr><tr><td>2026-04-27 00:00:00</td><td>20.0%</td><td>1.33×</td></tr></tbody></table></div></details></div>
+
+<p class="eyebrow">Question 2</p>
+<div class="band-head"><span class="qmark">Q2</span><h2>Do customers stay?</h2></div>
+<div class="grid"><div class="card"><h3>Base that has not yet faced a single renewal</h3><span class="mid">pct_base_never_rebilled · ungrouped · derived from signup_date alone</span><div class="figure">11.3%</div><div class="figsub">Turns “churn is out of scope” from a caveat into a computed fact.</div></div><details><summary>View table</summary><div class="tablewrap"><table><thead><tr><th>Renewals faced</th><th>Accounts</th></tr></thead><tbody><tr><td>0</td><td>339</td></tr><tr><td>1</td><td>1256</td></tr><tr><td>2</td><td>1099</td></tr><tr><td>3+</td><td>306</td></tr></tbody></table></div></details><div class="card void"><h3>Rebill rate — cycle 0 → cycle 1</h3><span class="mid">sticky.io #6 · the most-cited subscription metric</span><div class="figure">not observable</div><p class="blocked"><b>Blocked on:</b> renewal charge events. The generator emits one kit and one price per account; no second charge exists in the warehouse.</p><span class="unlock">PHASE 2.2 → MEASURED</span></div><div class="card void"><h3>Cancellations, pauses and skips — as volume</h3><span class="mid">shopify + crystallize · a named metric of the replenishment model</span><div class="figure">not observable</div><p class="blocked"><b>Blocked on:</b> cancellation, pause and skip events with a date and a reason.</p><span class="unlock">PHASE 2.1 → MEASURED</span></div><div class="card void"><h3>Churn rate · Retention rate</h3><span class="mid">all 4 references put it at the top</span><div class="figure">not observable</div><p class="blocked"><b>Blocked on:</b> cancellation events. A benchmark there is no way to test: &lt;5%/month (Crystallize); 3.9% average in consumer goods (Shopify).</p><span class="unlock">PHASE 2.1 → MEASURED</span></div><div class="card void"><h3>NRR · GRR · Expansion MRR</h3><span class="mid">crystallize · synthesis systems</span><div class="figure">not observable</div><p class="blocked"><b>Blocked on:</b> MRR movement decomposition. Phases 2.1–2.3 deliver contraction and churned, not expansion — that requires item 2.7.</p><span class="unlock">PHASE 2.1 + 2.2 + 2.7 → GRR MEASURED · NRR PENDING</span></div><div class="card void"><h3>Reactivation rate · Referrals in the first 4 weeks</h3><span class="mid">shopify · the leading predictor of retention</span><div class="figure">not observable</div><p class="blocked"><b>Blocked on:</b> referral and resubscription events. No current metric reflects a customer choosing to act.</p><span class="unlock">PHASE 2.1 + 2.5 → MEASURED</span></div></div>
+
+<p class="eyebrow">Question 3</p>
+<div class="band-head"><span class="qmark">Q3</span><h2>Are customers valuable?</h2></div>
+<div class="grid"><div class="card"><h3>Cycles to breakeven — sales_assisted</h3><span class="mid">breakeven_cycles · replaces LTV:CAC in this window</span><div class="figure">2.4</div><div class="figsub">79.0% of accounts reach breakeven inside the observed window</div></div><div class="card"><h3>Cycles to breakeven — self_serve</h3><span class="mid">breakeven_cycles · replaces LTV:CAC in this window</span><div class="figure">1.1</div><div class="figsub">92.9% of accounts reach breakeven inside the observed window</div></div><details><summary>View table</summary><div class="tablewrap"><table><thead><tr><th>Metric</th><th>Denominator</th><th>Excluded</th><th>Share</th></tr></thead><tbody><tr><td>activation_rate_30d</td><td>2661</td><td>339</td><td>11.3%</td></tr><tr><td>activation_rate_14d</td><td>2903</td><td>97</td><td>3.2%</td></tr><tr><td>activation_rate_7d</td><td>2937</td><td>63</td><td>2.1%</td></tr><tr><td>kit_sla_rate</td><td>2937</td><td>63</td><td>2.1%</td></tr><tr><td>digital_activation_rate_7d</td><td>2960</td><td>40</td><td>1.3%</td></tr></tbody></table></div></details></div>
+
+<p class="eyebrow">Question 4</p>
+<div class="band-head"><span class="qmark">Q4</span><h2>Are we acquiring efficiently?</h2></div>
+<div class="grid"><div class="card"><h3>Effective CAC — sales_assisted</h3><span class="mid">effective_cac · loaded with fulfilment waste</span><div class="figure">$29.89</div><div class="figsub">+12.5% over nominal CAC</div></div><div class="card"><h3>Effective CAC — self_serve</h3><span class="mid">effective_cac · loaded with fulfilment waste</span><div class="figure">$10.78</div><div class="figsub">+50.9% over nominal CAC</div></div></div>
+
+<p class="eyebrow">Decision layer</p>
+<div class="band-head"><span class="qmark">·</span><h2>Threshold, action and owner</h2></div>
+<div class="card"><details><summary>View table</summary><div class="tablewrap"><table><thead><tr><th>Metric</th><th>Value</th><th>Threshold</th><th>Action</th><th>Owner</th><th>Status</th></tr></thead><tbody><tr><td>at_risk_account_rate</td><td>0.325</td><td>0.300</td><td>Trigger the CS recovery queue prioritised by revenue</td><td>Customer Success</td><td><span class="v-trig">triggered</span></td></tr><tr><td>avg_breakeven_cycles</td><td>2.442</td><td>2.000</td><td>Flag the channel as an unproven bet and freeze spend increases</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>avg_days_to_kit_delivery</td><td>11.071</td><td>10.000</td><td>Escalate to the logistics partner</td><td>Operations</td><td><span class="v-trig">triggered</span></td></tr><tr><td>avg_delivery_delay_days</td><td>11.571</td><td>5.000</td><td>Audit the carrier for that state</td><td>Operations</td><td><span class="v-trig">triggered</span></td></tr><tr><td>cac_by_channel</td><td>26.555</td><td>15.000</td><td>Review the channel bid and creative</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>cac_uplift_pct</td><td>0.274</td><td>0.250</td><td>Review the kit shipping eligibility criteria</td><td>Growth + Ops</td><td><span class="v-trig">triggered</span></td></tr><tr><td>contribution_margin_per_cycle</td><td>9.490</td><td>10.000</td><td>Review COGS and shipping per tier</td><td>Finance</td><td><span class="v-trig">triggered</span></td></tr><tr><td>cost_per_activated_account</td><td>28.227</td><td>25.000</td><td>Review the quality of the accounts the channel brings</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>effective_cac</td><td>29.885</td><td>20.000</td><td>Freeze spend increases on the channel until loaded CAC comes down</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>incremental_mrr</td><td>0.000</td><td>5000.000</td><td>Review tier mix and pricing</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>kit_late_rate</td><td>0.413</td><td>0.200</td><td>Audit the carrier for that state</td><td>Operations</td><td><span class="v-trig">triggered</span></td></tr><tr><td>kit_lost_rate</td><td>0.072</td><td>0.050</td><td>Audit the carrier for that state</td><td>Operations</td><td><span class="v-trig">triggered</span></td></tr><tr><td>pct_base_never_rebilled</td><td>0.113</td><td>0.100</td><td>Mark every retention reading as inconclusive in the report</td><td>Analytics</td><td><span class="v-trig">triggered</span></td></tr><tr><td>share_breakeven_cycle_exposed</td><td>0.790</td><td>0.800</td><td>Report the unproven fraction alongside any payback claim</td><td>Analytics</td><td><span class="v-trig">triggered</span></td></tr><tr><td>state_penetration</td><td>0.081</td><td>0.100</td><td>Assess reallocating spend to states with a large remaining base</td><td>Growth</td><td><span class="v-trig">triggered</span></td></tr><tr><td>system_inflicted_at_risk_accounts</td><td>448.000</td><td>300.000</td><td>Trigger the CS recovery queue prioritised by revenue</td><td>Customer Success</td><td><span class="v-trig">triggered</span></td></tr><tr><td>zero_digital_access_accounts</td><td>592.000</td><td>400.000</td><td>Re-engagement campaign for accounts with no first login</td><td>Customer Success</td><td><span class="v-trig">triggered</span></td></tr><tr><td>activation_rate_30d_vs_benchmark</td><td>1.016</td><td>1.000</td><td>Open an onboarding investigation and segment by driver</td><td>Product</td><td><span class="v-ok">ok</span></td></tr><tr><td>arpa</td><td>27.957</td><td>25.000</td><td>Review tier mix</td><td>Growth</td><td><span class="v-ok">ok</span></td></tr><tr><td>attach_rate_vs_target</td><td>1.333</td><td>1.000</td><td>Review channel mix in the weekly launch review</td><td>Growth</td><td><span class="v-ok">ok</span></td></tr><tr><td>cac_payback_months</td><td>1.859</td><td>3.000</td><td>Freeze spend increases on the channel</td><td>Growth</td><td><span class="v-ok">ok</span></td></tr><tr><td>digital_activation_rate_7d</td><td>0.659</td><td>0.600</td><td>Review the first-login flow</td><td>Product</td><td><span class="v-ok">ok</span></td></tr><tr><td>kit_on_time_delivery_rate</td><td>0.845</td><td>0.800</td><td>Escalate to the regional logistics partner</td><td>Operations</td><td><span class="v-ok">ok</span></td></tr><tr><td>kit_sla_rate</td><td>0.845</td><td>0.800</td><td>Escalate to the regional logistics partner</td><td>Operations</td><td><span class="v-ok">ok</span></td></tr><tr><td>never_logged_in_share</td><td>0.159</td><td>0.200</td><td>Open an onboarding investigation; the mean time-to-login cannot see this</td><td>Product</td><td><span class="v-ok">ok</span></td></tr><tr><td>task_completion_rate</td><td>0.706</td><td>0.400</td><td>Review the first-cycle task volume</td><td>Product</td><td><span class="v-ok">ok</span></td></tr><tr><td>task_engagement_rate</td><td>0.838</td><td>0.500</td><td>Review first-cycle task onboarding</td><td>Product</td><td><span class="v-ok">ok</span></td></tr><tr><td>win_rate</td><td>0.302</td><td>0.300</td><td>Review the sales-assisted playbook</td><td>Sales</td><td><span class="v-ok">ok</span></td></tr><tr><td>zero_task_accounts</td><td>430.000</td><td>600.000</td><td>Re-engagement campaign for accounts with no completed task</td><td>Customer Success</td><td><span class="v-ok">ok</span></td></tr></tbody></table></div></details></div>
+
+<footer>
+<p>Every revenue figure on this page is a <b>modelled entitlement</b>, not collected cash —
+no payment event exists in the warehouse.</p>
+<p>Band 2 is empty on purpose: the project measures acquisition and onboarding very well,
+and does not measure the subscription. Each card declares what unblocks it.</p>
+</footer>
+</div>

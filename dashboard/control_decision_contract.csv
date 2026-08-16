@@ -1,0 +1,30 @@
+metric_name,decision_question,current_value,segment,threshold_value,threshold_direction,status,action,owner
+at_risk_account_rate,staying,0.3251808473992422,,0.3,above,triggered,Trigger the CS recovery queue prioritised by revenue,Customer Success
+avg_breakeven_cycles,valuable,2.441601779755284,sales_assisted,2.0,at_or_above,triggered,Flag the channel as an unproven bet and freeze spend increases,Growth
+avg_days_to_kit_delivery,efficient,11.070796460176991,OH,10.0,above,triggered,Escalate to the logistics partner,Operations
+avg_delivery_delay_days,efficient,11.571428571428571,PA,5.0,above,triggered,Audit the carrier for that state,Operations
+cac_by_channel,efficient,26.554794215795326,sales_assisted,15.0,above,triggered,Review the channel bid and creative,Growth
+cac_uplift_pct,efficient,0.27357214145342673,,0.25,above,triggered,Review the kit shipping eligibility criteria,Growth + Ops
+contribution_margin_per_cycle,valuable,9.489999999999823,small,10.0,below,triggered,Review COGS and shipping per tier,Finance
+cost_per_activated_account,efficient,28.227265826343658,sales_assisted,25.0,above,triggered,Review the quality of the accounts the channel brings,Growth
+effective_cac,efficient,29.88516129032258,sales_assisted,20.0,above,triggered,Freeze spend increases on the channel until loaded CAC comes down,Growth
+incremental_mrr,growing,0.0,2026-05-04 00:00:00,5000.0,below,triggered,Review tier mix and pricing,Growth
+kit_late_rate,efficient,0.41304347826086957,OH,0.2,above,triggered,Audit the carrier for that state,Operations
+kit_lost_rate,efficient,0.07246376811594203,OH,0.05,above,triggered,Audit the carrier for that state,Operations
+pct_base_never_rebilled,staying,0.113,,0.1,above,triggered,Mark every retention reading as inconclusive in the report,Analytics
+share_breakeven_cycle_exposed,valuable,0.7897664071190211,sales_assisted,0.8,below,triggered,Report the unproven fraction alongside any payback claim,Analytics
+state_penetration,growing,0.08108108108108109,PA,0.1,below,triggered,Assess reallocating spend to states with a large remaining base,Growth
+system_inflicted_at_risk_accounts,staying,448.0,,300.0,above,triggered,Trigger the CS recovery queue prioritised by revenue,Customer Success
+zero_digital_access_accounts,staying,592.0,,400.0,above,triggered,Re-engagement campaign for accounts with no first login,Customer Success
+activation_rate_30d_vs_benchmark,valuable,1.0157298545122673,,1.0,below,ok,Open an onboarding investigation and segment by driver,Product
+arpa,valuable,27.956666666666585,,25.0,below,ok,Review tier mix,Growth
+attach_rate_vs_target,growing,1.3333333333333335,2026-04-27 00:00:00,1.0,below,ok,Review channel mix in the weekly launch review,Growth
+cac_payback_months,efficient,1.8593201765487928,sales_assisted,3.0,above,ok,Freeze spend increases on the channel,Growth
+digital_activation_rate_7d,valuable,0.6587837837837838,,0.6,below,ok,Review the first-login flow,Product
+kit_on_time_delivery_rate,efficient,0.8454204971058904,,0.8,below,ok,Escalate to the regional logistics partner,Operations
+kit_sla_rate,valuable,0.8454204971058904,,0.8,below,ok,Escalate to the regional logistics partner,Operations
+never_logged_in_share,valuable,0.15933859451334084,,0.2,above,ok,Open an onboarding investigation; the mean time-to-login cannot see this,Product
+task_completion_rate,valuable,0.7056557685080797,,0.4,below,ok,Review the first-cycle task volume,Product
+task_engagement_rate,valuable,0.8384066140548666,,0.5,below,ok,Review first-cycle task onboarding,Product
+win_rate,efficient,0.301981860933826,,0.3,below,ok,Review the sales-assisted playbook,Sales
+zero_task_accounts,staying,430.0,,600.0,above,ok,Re-engagement campaign for accounts with no completed task,Customer Success

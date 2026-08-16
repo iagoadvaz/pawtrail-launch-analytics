@@ -234,3 +234,21 @@ models:
       - name: ending_mrr_usd
         tests:
           - not_null
+
+  - name: fct_decision_contract
+    columns:
+      - name: metric_name
+        tests:
+          - unique
+          - not_null
+      - name: status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ok', 'triggered', 'no_data']
+      - name: decision_question
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['growing', 'staying', 'valuable', 'efficient']

@@ -1,0 +1,30 @@
+metric_name,current_value,segment
+attach_rate_vs_target,1.3333333333333335,2026-04-27 00:00:00
+state_penetration,0.08108108108108109,PA
+pct_base_never_rebilled,0.113,
+activation_rate_30d_vs_benchmark,1.0157298545122673,
+digital_activation_rate_7d,0.6587837837837838,
+kit_sla_rate,0.8454204971058904,
+avg_breakeven_cycles,2.441601779755284,sales_assisted
+share_breakeven_cycle_exposed,0.7897664071190211,sales_assisted
+task_engagement_rate,0.8384066140548666,
+task_completion_rate,0.7056557685080797,
+cac_uplift_pct,0.27357214145342673,
+effective_cac,29.88516129032258,sales_assisted
+cac_by_channel,26.554794215795326,sales_assisted
+kit_on_time_delivery_rate,0.8454204971058904,
+kit_lost_rate,0.07246376811594203,OH
+kit_late_rate,0.41304347826086957,OH
+avg_delivery_delay_days,11.571428571428571,PA
+at_risk_account_rate,0.3251808473992422,
+system_inflicted_at_risk_accounts,448,
+zero_digital_access_accounts,592,
+zero_task_accounts,430,
+never_logged_in_share,0.15933859451334084,
+win_rate,0.301981860933826,
+incremental_mrr,0.0,2026-05-04 00:00:00
+arpa,27.956666666666585,
+contribution_margin_per_cycle,9.489999999999823,small
+cac_payback_months,1.8593201765487928,sales_assisted
+cost_per_activated_account,28.227265826343658,sales_assisted
+avg_days_to_kit_delivery,11.070796460176991,OH

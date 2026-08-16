@@ -33,3 +33,38 @@ models:
       - name: won
         tests:
           - not_null
+
+  - name: stg_decision_contract
+    columns:
+      - name: metric_name
+        tests:
+          - unique
+          - not_null
+      - name: threshold_value
+        tests:
+          - not_null
+      - name: threshold_direction
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['below', 'above', 'at_or_above']
+      - name: action
+        tests:
+          - not_null
+      - name: owner
+        tests:
+          - not_null
+      - name: decision_question
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['growing', 'staying', 'valuable', 'efficient']
+
+  - name: raw_published_metrics
+    columns:
+      - name: metric_name
+        tests:
+          - unique
+          - not_null
