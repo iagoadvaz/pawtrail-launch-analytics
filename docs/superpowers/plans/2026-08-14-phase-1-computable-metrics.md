@@ -1572,6 +1572,55 @@ cd pawtrail_dbt && ../.venv/bin/dbt build --select fct_login_timing_distribution
 
 Expected: the model builds, 3 tests pass.
 
+- [ ] **Step 3b: Declare `never_logged_in_share` as a metric**
+
+The table above is a publication artefact with no semantic model, so nothing in
+it is queryable through `mf`. The censored share still has to be, because it is
+the metric that carries the §1.4 finding into the decision contract: the mean
+time-to-login **improves as onboarding gets worse**, since accounts that never
+log in leave that average rather than lengthening it. The contract thresholds
+the censored share instead — and until this step existed, that row could only
+ever read `no_data`, so replacing the inverted mean-based alarm had swapped one
+alarm that fires wrongly for one that cannot fire at all.
+
+It is declared on `activation_events` rather than over the distribution table,
+because that semantic model already owns the denominator (`mature_accounts_30d`)
+and every account dimension, so the share is answerable by state and channel too.
+
+In `pawtrail_dbt/models/marts/_semantic_models.yml`, inside the `activation_events`
+semantic model's `measures:` list, append:
+
+```yaml
+      # Accounts that never logged in at all, within the mature cohort. The
+      # numerator of the censored share; see METRICS.md on why the mean
+      # time-to-login cannot see these accounts.
+      - name: never_logged_in_accounts
+        agg: sum
+        # days_to_first_login, not first_login_date: fct_activation_events
+        # carries the interval, not the date, and it is null exactly when the
+        # account never logged in. A measure naming a column the mart does not
+        # select builds green under dbt and fails only at mf query time.
+        expr: case when days_to_first_login is null and is_mature_30d then 1 else 0 end
+        create_metric: true
+```
+
+and in `pawtrail_dbt/models/marts/_metrics.yml`, append:
+
+```yaml
+  # The share of the mature cohort that never logged in. Thresholded by the
+  # Phase 3 decision contract in place of avg_days_to_first_login, which moves
+  # the wrong way when onboarding degrades.
+  - name: never_logged_in_share
+    type: ratio
+    label: "Share of Mature Cohort That Never Logged In"
+    type_params:
+      numerator: never_logged_in_accounts
+      denominator: mature_accounts_30d
+```
+
+Expected: `mf query --metrics never_logged_in_share` returns **0.1593**, matching
+the `never` band's share in the table above (424 of 2,661).
+
 - [ ] **Step 4: Confirm the censored tail shows up**
 
 ```bash
@@ -1676,7 +1725,15 @@ flagged as (
         f.first_login_date,
         f.no_digital_access_14d,
         (f.kit_lost or f.kit_delivered_date is null or not f.kit_activated_sla) as kit_failed_sla,
-        (coalesce(f.care_tasks_completed_first_cycle, 0) = 0) as no_tasks_completed,
+        -- Gated on the 30-day cohort, not on this model's 14-day floor.
+        -- care_tasks_completed_first_cycle counts tasks across the whole first
+        -- cycle, so an account 14 days old still has half of it left. It also
+        -- has to match the zero_task_accounts KPI exactly -- one concept, two
+        -- consumers -- which assert_zero_task_flag_matches_the_kpi_definition
+        -- enforces. This task replaces the whole model, so dropping the gate
+        -- here silently reverts that fix: without it the test fails on 37 rows.
+        (f.is_mature_30d and coalesce(f.care_tasks_completed_first_cycle, 0) = 0)
+            as no_tasks_completed,
         p.monthly_price_usd
     from funnel f
     left join pricing p on f.pet_tier = p.pet_tier
@@ -1875,7 +1932,23 @@ for r in c.sql('''
 "
 ```
 
-Expected: total at risk near 944 (unchanged — the classification does not change who is at risk). `system_inflicted` in the 400–500 range with recoverable MRR of $10k–15k. **If `self_selected` comes out empty, stop and report** — the tenure condition may be too restrictive for this seed.
+Expected, measured: total at risk **944** (unchanged — the classification does
+not change who is at risk), split `system_inflicted` **448** ($12,455.52
+recoverable), `ambiguous` **485** ($13,625.15), `self_selected` **11** ($299.89).
+**If `self_selected` comes out empty, stop and report** — the tenure condition is
+too restrictive for the seed.
+
+**Read the 11 honestly rather than as a delivered three-way split.** Only 38 of
+the 944 at-risk accounts have tenure at or below `self_selected_tenure_days` at
+all, and the ordered CASE assigns a delivery defect first, so 11 is what remains
+— 1.2% of the queue. Operationally the list is still the two buckets it was
+before, and the value here is the *demonstration* that the third one is not
+recoverable from this data, not the bucket itself. Appendix A's illustrative
+360 is unreachable: `assert_system_inflicted_not_concentrated_in_short_tenure`
+passes with a wide margin precisely because tenure does not discriminate — mean
+tenure is 661.7 days in `system_inflicted` against 669.0 in `ambiguous` and a
+base median of 660. That null result is the finding, and METRICS.md should say
+so rather than presenting a three-way queue the data cannot support.
 
 - [ ] **Step 7: Declare the metrics**
 
