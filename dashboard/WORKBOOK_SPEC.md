@@ -107,6 +107,10 @@ in its own title bar.
 | 6 | CS Queue | at-risk by driver, at-risk rate by state, damage classification | `at_risk_by_driver`, `at_risk_by_state`, `at_risk_by_damage_class` |
 | 7 | Decision Contract | one table per decision question, 29 rows | `decision_contract` |
 
+`diagrams/` holds one Excalidraw scene per tab explaining every card on it: how
+the metric is computed, why it matters, and — for the ones this project got
+wrong once — what the obvious computation returns instead.
+
 Three conventions in the mock are load-bearing and easy to lose when rebuilding
 by hand:
 

@@ -31,6 +31,10 @@ page organised around the four decision questions; the mock is the sheet-by-shee
 reference for rebuilding this in Tableau Public, where each tab is one dashboard
 and each card names the CSV feeding it in its own title bar.
 
+`diagrams/` explains the workbook card by card: one Excalidraw scene per tab,
+each panel giving the formula, the decision it informs, and how the metric
+misreads if computed the obvious way instead. See `diagrams/README.md`.
+
 `WORKBOOK_SPEC.md` carries the tab-to-extract map and the three conventions most
 easily lost in a hand rebuild: reference lines rather than ratio bars, the
 cohort-weighted rate rather than the newest cohort on any headline tile, and
