@@ -5,7 +5,7 @@ This is a human-readable companion to the MetricFlow semantic layer defined in
 `pawtrail_dbt/models/marts/_semantic_models.yml` (13 semantic models). Every
 metric below is queryable via `mf query --metrics <name>`.
 
-**`mf list metrics` returns 112 names, not 50.** The 62 extras are not
+**`mf list metrics` returns 113 names, not 50.** The 63 extras are not
 undocumented metrics; they are the measures behind the 33, exposed as
 queryable names by `create_metric: true` on their declarations —
 `mature_accounts_30d`, `kits_shipped`, `channel_spend_usd`, `pitches_won` and
@@ -352,6 +352,15 @@ Every metric here is grouped by `lifecycle_row__cycle_index` or
 figure blended across cycles mixes a cumulative survival curve with an
 incremental hazard.
 
+Concretely, for `retention_rate` and `monthly_churn_rate` the ungrouped answer
+corresponds to no cycle at all. Retention reads **0.832** against per-cycle
+values of 0.986 / 0.761 / 0.680 / 0.644, and the churn hazard reads **0.111**
+against 0.014 / 0.228 / 0.102 / 0.066. Both are pooled averages over
+account-cycle rows, weighted by how many accounts reached each cycle, and
+neither is a number to quote. `skip_rate` and `pause_rate` are safe ungrouped
+because their denominator excludes the cycle where the behaviour is impossible;
+these two are not, and the grouping is the guard.
+
 ### rebill_rate
 - **Definition:** Share of accounts that reached the end of cycle 0 alive and were actually billed at cycle 1 — the replenishment sector's most-cited retention number.
 - **Formula:** `ratio` — `cycle_one_rebilled_accounts ÷ cycle_one_accounts`
@@ -370,14 +379,16 @@ incremental hazard.
 - **Assumption:** The denominator is the **at-risk** population, not every row at that cycle. Accounts that cancelled in an earlier cycle are carried forward in the spine and had no opportunity to churn again; leaving them in understates the hazard by 24% at cycle 2 and 31% at cycle 3, and does so more the later the cycle — which flattens the one property of the curve that matters, its shape.
 
 ### skip_rate
-- **Definition:** Share of cycles in which a live subscription skipped its shipment.
-- **Formula:** `ratio` — `skipped_cycles ÷ cycle_rows`
+- **Definition:** Share of **renewal** cycles in which a live subscription skipped its shipment.
+- **Formula:** `ratio` — `skipped_cycles ÷ renewal_cycle_rows`
 - **Source:** `subscription_lifecycle`
+- **Assumption:** The denominator counts renewal cycles only. Cycle 0 is the initial purchase — you cannot skip your first shipment — so its 3,000 rows are a population with no opportunity to produce the numerator event. Dividing by every account-cycle understated this by 41% (0.0554 → 0.0328). The metric is now null at cycle 0 rather than reporting a structural 0 as though it were an observation.
 
 ### pause_rate
-- **Definition:** Share of cycles in which a subscription was paused.
-- **Formula:** `ratio` — `paused_cycles ÷ cycle_rows`
+- **Definition:** Share of **renewal** cycles in which a subscription was paused.
+- **Formula:** `ratio` — `paused_cycles ÷ renewal_cycle_rows`
 - **Source:** `subscription_lifecycle`
+- **Assumption:** Same renewal-cycle denominator, for the same reason (0.0284 against 0.0168 on the diluted base).
 
 ### gross_revenue_retention
 - **Definition:** How much of a cycle's starting subscription value survives, ignoring expansion. Cannot exceed 100% by construction.

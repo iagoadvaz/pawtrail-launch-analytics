@@ -1,9 +1,9 @@
 lifecycle_row__cycle_index,account__channel,monthly_churn_rate
-1,sales_assisted,0.2312579415501906
+3,sales_assisted,0.09259259259259259
 2,sales_assisted,0.12759643916913946
 0,sales_assisted,0.012235817575083427
-3,sales_assisted,0.09259259259259259
+1,sales_assisted,0.2312579415501906
+1,self_serve,0.2262813522355507
 0,self_serve,0.015230842455973346
 2,self_serve,0.09065934065934066
-1,self_serve,0.2262813522355507
 3,self_serve,0.05732484076433121

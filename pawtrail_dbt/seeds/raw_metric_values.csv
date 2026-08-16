@@ -25,6 +25,6 @@ win_rate,0.301981860933826,
 incremental_mrr,0.0,2026-05-04 00:00:00
 arpa,27.956666666666585,
 contribution_margin_per_cycle,9.489999999999823,small
-cac_payback_months,1.8593201765487928,sales_assisted
-cost_per_activated_account,28.227265826343658,sales_assisted
+cac_payback_months,1.859320176548793,sales_assisted
+cost_per_activated_account,28.22726582634366,sales_assisted
 avg_days_to_kit_delivery,11.070796460176991,OH

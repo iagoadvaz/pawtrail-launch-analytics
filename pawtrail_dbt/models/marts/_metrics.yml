@@ -390,14 +390,14 @@ metrics:
     label: "Skip Rate per Cycle"
     type_params:
       numerator: skipped_cycles
-      denominator: cycle_rows
+      denominator: renewal_cycle_rows
 
   - name: pause_rate
     type: ratio
     label: "Pause Rate per Cycle"
     type_params:
       numerator: paused_cycles
-      denominator: cycle_rows
+      denominator: renewal_cycle_rows
 
   # GRR: how much of the starting revenue survives, IGNORING expansion. Capped
   # at 100% by definition.
