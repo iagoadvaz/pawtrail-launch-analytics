@@ -23,3 +23,8 @@ data/olist_reference/raw/
 
 # OS
 .DS_Store
+
+# Git worktrees created for isolated feature work. These are full checkouts of
+# other branches (hundreds of MB); they live inside the repo for convenience and
+# must never be committed into it.
+.claude/worktrees/
