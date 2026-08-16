@@ -17,7 +17,7 @@
 - **Python:** use the project venv — `.venv/bin/python`, `.venv/bin/dbt`, `.venv/bin/mf`. Do not use the system python (it has no duckdb installed).
 - **Non-negotiable naming constraint (spec §1.1):** nothing may be named `rebill_rate`, `renewal_revenue` or `retained_mrr`. The cycle clock measures **exposure** to renewal, never the charge. Violating this is the gravest failure available in this project.
 - **Thresholds live in vars:** every new business number goes into `vars:` in `dbt_project.yml`, following the established pattern. Never hardcoded in SQL.
-- **Baseline to preserve:** `dbt build` PASS=123 (7 seeds, 20 models, 96 tests, 0 errors); `pytest` 22 passed. Each task only raises those counts.
+- **Baseline to preserve:** `dbt build` PASS=127 (7 seeds, 20 models, 100 tests, 0 errors); `pytest` 30 passed. Each task only raises those counts. Run `dbt build` before `pytest` on a fresh worktree: four of the 30 are `semantic_tests/` grain checks that query the warehouse through `mf` and fail until it has been built once, which reads as a broken baseline and is not one.
 - **`mf validate-configs` passing is NOT sufficient acceptance** (spec §6.6): every new metric requires an `mf query` at the grain the dashboard uses.
 - **No `dbt_utils`** — the project has no `packages.yml`. Composite uniqueness is tested with a surrogate key plus a `unique` test, which is the pattern already in use (`channel_week_key`, `weekly_attach_key`).
 - **DuckDB trap, verified empirically:** `DATE + INTERVAL (n) MONTH` returns a **TIMESTAMP**, not a DATE — always cast with `::date`. And **do not use `date_diff('month', ...)`** to count completed cycles: it counts month boundaries crossed, not whole months, returning 3 for 2026-01-05 → 2026-04-04 where the correct answer is 2. The cycle spine filtered by due date is what avoids this.
@@ -100,7 +100,7 @@ Expected: prints the dbt-core and duckdb adapter versions without error.
 cd pawtrail_dbt && ../.venv/bin/dbt build 2>&1 | tail -5
 ```
 
-Expected: `Done. PASS=123 WARN=0 ERROR=0 SKIP=0 TOTAL=123`. If it does not match, **stop and report** — this plan assumes that baseline.
+Expected: `Done. PASS=127 WARN=0 ERROR=0 SKIP=0 TOTAL=127`, then `pytest` at **30 passed** in that order. If either does not match, **stop and report** — this plan assumes that baseline. (123 and 22 were the counts before the spend-reconciliation, maturity-gate and documentation work landed on the implementation branch.)
 
 - [ ] **Step 4: Add the billing-cycle vars**
 
@@ -2390,7 +2390,7 @@ cd pawtrail_dbt && ../.venv/bin/dbt build 2>&1 | tail -4
 cd /home/iagoadvaz/projects/pawtrail-launch-analytics/.claude/worktrees/phase-1-metrics && .venv/bin/pytest -q 2>&1 | tail -4
 ```
 
-Expected: `dbt build` with `ERROR=0`; `pytest` with 22 passed (this phase does not touch the generator, so the count is unchanged).
+Expected: `dbt build` at **PASS=184 ERROR=0**; `pytest` at **30 passed** (this phase does not touch the generator or the test suites, so the pytest count is unchanged from the baseline).
 
 - [ ] **Step 11: Commit**
 
